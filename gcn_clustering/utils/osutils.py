@@ -2,6 +2,9 @@ from __future__ import absolute_import
 import os
 import errno
 
+"""
+Used for logging not really relevant
+"""
 
 def mkdir_if_missing(dir_path):
     try:

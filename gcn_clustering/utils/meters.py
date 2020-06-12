@@ -1,5 +1,8 @@
 from __future__ import absolute_import
 
+"""
+Used to compute the average time of different working steps.
+"""
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

@@ -4,7 +4,9 @@ import sys
 
 from .osutils import mkdir_if_missing
 
-
+"""
+Used for logging; not really relevant
+"""
 class Logger(object):
     def __init__(self, fpath=None):
         self.console = sys.stdout

@@ -13,6 +13,13 @@ import numpy as np
 import random
 import torch
 import torch.utils.data as data
+
+"""
+This is the same file as the original feeder, just that it is used for the visualization script (probably to not mess 
+with settings during training) 
+"""
+
+
 class Feeder(data.Dataset):
     '''
     Generate a sub-graph from the feature graph centered at some node, 

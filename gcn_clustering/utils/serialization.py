@@ -10,6 +10,9 @@ from .osutils import mkdir_if_missing
 
 
 def read_json(fpath):
+    """
+    Method used to load json; return json object
+    """
     with open(fpath, 'r') as f:
         obj = json.load(f)
     return obj
@@ -22,6 +25,10 @@ def write_json(obj, fpath):
 
 
 def save_checkpoint(state, is_best, fpath='checkpoint.pth.tar'):
+    """
+    Used to save model in logs folder after each epoch (is_best can be used so that it is saved separately and is not
+    overwritten)
+    """
     mkdir_if_missing(osp.dirname(fpath))
     torch.save(state, fpath)
     if is_best:
@@ -29,6 +36,9 @@ def save_checkpoint(state, is_best, fpath='checkpoint.pth.tar'):
 
 
 def load_checkpoint(fpath):
+    """
+    Method used to load a checkpoint from a directory
+    """
     if osp.isfile(fpath):
         checkpoint = torch.load(fpath)
         print("=> Loaded checkpoint '{}'".format(fpath))
@@ -38,6 +48,9 @@ def load_checkpoint(fpath):
 
 
 def copy_state_dict(state_dict, model, strip=None):
+    """
+    Method used to change state_dict of a model with another state_dict
+    """
     tgt_state = model.state_dict()
     copied_names = set()
     for name, param in state_dict.items():

@@ -12,22 +12,31 @@ import numpy as np
 from scipy.sparse import coo_matrix
 
 import matplotlib
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+
 def norm(X):
-    for ix,x in enumerate(X):
-        X[ix]/=np.linalg.norm(x)
+    """
+    Function to normalize matrix elements
+    """
+    for ix, x in enumerate(X):
+        X[ix] /= np.linalg.norm(x)
     return X
 
-def plot_embedding(X,Y):
-    x_min, x_max = np.min(X,0), np.max(X,0)
+
+def plot_embedding(X, Y):
+    """
+    Function to plot a graph embedding
+    """
+    x_min, x_max = np.min(X, 0), np.max(X, 0)
     X = (X - x_min) / (x_max - x_min)
-    plt.figure(figsize=(10,10))
+    plt.figure(figsize=(10, 10))
     for i in xrange(X.shape[0]):
-        plt.text(X[i,0],X[i,1], str(Y[i]),
-                color=plt.cm.Set1(Y[i]/10.),
-                fontdict={'weight':'bold','size':12})
+        plt.text(X[i, 0], X[i, 1], str(Y[i]),
+                 color=plt.cm.Set1(Y[i] / 10.),
+                 fontdict={'weight': 'bold', 'size': 12})
     plt.savefig('a.jpg')
 
 
@@ -96,5 +105,5 @@ def bcubed(ref_labels, sys_labels, cm=None):
     cm_norm = cm / cm.sum()
     precision = np.sum(cm_norm * (cm / cm.sum(axis=0)))
     recall = np.sum(cm_norm * (cm / np.expand_dims(cm.sum(axis=1), 1)))
-    f1 = 2*(precision*recall)/(precision + recall)
+    f1 = 2 * (precision * recall) / (precision + recall)
     return precision, recall, f1
