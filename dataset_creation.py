@@ -182,7 +182,7 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
         print("BACKGROUND IDX (TRAIN/ VALID/ TEST):")
         print(train_bg_idx.shape, valid_bg_idx.shape, test_bg_idx.shape)
     elif split_by == "frame":
-        print()
+        print("CURRENTLY NOT SUPPORTED")
 
     train_classes = classes.iloc[train_idx, :]
     train_classes['is_train'] = True
@@ -198,9 +198,9 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     test_bg = background.iloc[valid_test_bg_idx, :].iloc[test_bg_idx, :]
     test_bg['is_test'] = True
 
+    # reconstruct metadata file
     metadata_file = pd.concat(
         [train_classes, valid_classes, test_classes, train_bg, valid_bg, test_bg, removed]).sort_values('idx')
-    print(metadata_file.shape)
     return metadata_file
 
 
