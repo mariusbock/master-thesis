@@ -134,7 +134,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
     metadata_file['gt_y1'] = gt_y1
     metadata_file['gt_w'] = gt_w
     metadata_file['gt_h'] = gt_h
-    metadata_file['labels'] = labels
+    metadata_file['labels_' + iou_range[0] + "_" + iou_range[1] + "_" + background_handling] = labels
     metadata_file['is_class'] = class_array
     metadata_file['is_background'] = background_array
     metadata_file['is_excluded'] = excluded_array
@@ -354,7 +354,7 @@ if __name__ == '__main__':
 
     # Detection parameters
     sequence = "MOT/MOT17/MOT17-02"
-    detector = "dpm"
+    detector = "sdp"
 
     # Face Datasets for comparison
     # label_dataset_faces = np.load("data/facedata/512.labels.npy")
@@ -366,7 +366,7 @@ if __name__ == '__main__':
     det_file_mot = np.loadtxt(os.path.join("data", sequence, detector, "det.txt"), delimiter=",")
     gt_file_mot = np.loadtxt(os.path.join("data", sequence, "gt.txt"), delimiter=",")
 
-    # Folder variables
+    # Folder variables´
     output_folder = os.path.join("data", sequence, detector)
     image_folder_path = os.path.join("data", sequence, "images")
 
