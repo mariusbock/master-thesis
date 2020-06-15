@@ -10,8 +10,8 @@ from torchvision import transforms, ops
 
 from resnet_modified import resnet50
 from utils import iou, ImageFolderWithPaths
-pd.options.mode.chained_assignment = None
 
+pd.options.mode.chained_assignment = None
 
 
 def create_meta_dataset(detection_file):
@@ -24,9 +24,8 @@ def create_meta_dataset(detection_file):
     metadata_file['frame'] = detection_file[:, 1]
     metadata_file['det_x1'] = detection_file[:, 3]
     metadata_file['det_y1'] = detection_file[:, 4]
-    metadata_file['det_x2'] = detection_file[:, 3] + detection_file[:, 5]
-    metadata_file['det_y2'] = detection_file[:, 4] + detection_file[:, 6]
-
+    metadata_file['det_w'] = detection_file[:, 5]
+    metadata_file['det_h'] = detection_file[:, 6]
     return metadata_file
 
 
@@ -61,19 +60,21 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
 
     # dataset that will contain both ids and labels
     labels = np.full(num_lines_det, -1)
+    gt_labels = np.full(num_lines_det, -1)
 
     # filter arrays to obtain all detections that were assigned a class, background or both
     class_array = np.zeros(num_lines_det, dtype=bool)
-    excluded_array = np.zeros(num_lines_det, dtype=bool)
+    excluded_array = np.ones(num_lines_det, dtype=bool)
     background_array = np.zeros(num_lines_det, dtype=bool)
+
     # array that will contain bounding box coordinates of the matched ground truth box
     gt_x1 = np.full(num_lines_det, -1)
     gt_y1 = np.full(num_lines_det, -1)
-    gt_x2 = np.full(num_lines_det, -1)
-    gt_y2 = np.full(num_lines_det, -1)
+    gt_w = np.full(num_lines_det, -1)
+    gt_h = np.full(num_lines_det, -1)
     # array that will contain the corresponding maximum iou from all ground truth boxes for said detection
     iou_array = np.zeros(num_lines_det)
-
+    test = 1
     # main for loop for iterating through each detection
     for i, (det_line) in enumerate(detection_file):
         # only compare detection to ground truth bounding boxes from same frame which are not occluded (i.e. visible)
@@ -90,10 +91,11 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
             if curr_iou > iou_array[int(det_line[0])]:
                 # then make current iou new largest one and update iou_array as well as gt_bbox arrays
                 iou_array[int(det_line[0])] = curr_iou
-                gt_x1[int(det_line[0])] = gt_bbox[0]
-                gt_y1[int(det_line[0])] = gt_bbox[1]
-                gt_x2[int(det_line[0])] = gt_bbox[2]
-                gt_y2[int(det_line[0])] = gt_bbox[3]
+                gt_labels[int(det_line[0])] = gt_line[1]
+                gt_x1[int(det_line[0])] = gt_line[2]
+                gt_y1[int(det_line[0])] = gt_line[3]
+                gt_w[int(det_line[0])] = gt_line[4]
+                gt_h[int(det_line[0])] = gt_line[5]
                 # if the iou is larger than the upper bound of the iou_range assign it the class of the gt
                 # also update filter arrays
                 if curr_iou > iou_range[0]:
@@ -102,7 +104,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
                     background_array[int(det_line[0])] = False
                     excluded_array[int(det_line[0])] = False
                 # if the iou is within the iou_range exclude the detection by updating the filter arrays
-                elif iou_range[0] > curr_iou > iou_range[1]:
+                elif iou_range[0] >= curr_iou >= iou_range[1]:
                     labels[int(det_line[0])] = gt_line[1]
                     class_array[int(det_line[0])] = False
                     background_array[int(det_line[0])] = False
@@ -125,17 +127,18 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
                 continue
         if i % 2500 == 0:
             print("Detection processed: " + str(i) + "/" + str(num_lines_det))
-
     # save all information to metadata_file
     metadata_file['iou'] = iou_array
+    metadata_file['gt_labels'] = gt_labels
     metadata_file['gt_x1'] = gt_x1
     metadata_file['gt_y1'] = gt_y1
-    metadata_file['gt_x2'] = gt_x2
-    metadata_file['gt_y2'] = gt_y2
+    metadata_file['gt_w'] = gt_w
+    metadata_file['gt_h'] = gt_h
     metadata_file['labels'] = labels
     metadata_file['is_class'] = class_array
     metadata_file['is_background'] = background_array
     metadata_file['is_excluded'] = excluded_array
+
     return labels, metadata_file
 
 
@@ -152,6 +155,7 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     metadata_file['is_valid'] = False
     metadata_file['is_test'] = False
 
+    # split metadata file into records that are assigned a class, background or nothing
     background = metadata_file[metadata_file['is_background']]
     classes = metadata_file[metadata_file['is_class']]
     removed = metadata_file[metadata_file['is_excluded']]
@@ -163,6 +167,9 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     print("REMOVED DETECTIONS:")
     print(removed.shape)
 
+    # Currently only split by ID is supported. Idea is to split classes and background independently
+    # This ensures a correct distribution. The code splits the classes and background attribute above into train, valid
+    # and test via GroupShuffleSplit, ShuffleSplit and indexing.
     if split_by == "id":
         # create idx for classes
         train_idx, valid_test_idx = next(GroupShuffleSplit(train_size=split_ratio[0], n_splits=2, random_state=7)
@@ -184,6 +191,7 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     elif split_by == "frame":
         print("CURRENTLY NOT SUPPORTED")
 
+    # split classes attribute into train, valid and test using indeces obtained above
     train_classes = classes.iloc[train_idx, :]
     train_classes['is_train'] = True
     valid_classes = classes.iloc[valid_test_idx, :].iloc[valid_idx, :]
@@ -191,6 +199,7 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     test_classes = classes.iloc[valid_test_idx, :].iloc[test_idx, :]
     test_classes['is_test'] = True
 
+    # split background attribute into train, valid and test using indeces obtained above
     train_bg = background.iloc[train_bg_idx, :]
     train_bg['is_train'] = True
     valid_bg = background.iloc[valid_test_bg_idx, :].iloc[valid_bg_idx, :]
@@ -201,6 +210,7 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     # reconstruct metadata file
     metadata_file = pd.concat(
         [train_classes, valid_classes, test_classes, train_bg, valid_bg, test_bg, removed]).sort_values('idx')
+
     return metadata_file
 
 
@@ -297,31 +307,31 @@ def filter_dataset_for_iou(metadata_file, iou_train, iou_valid, iou_test, lower_
     """
     for tr_iou in iou_train:
         # create a filter array column for the new train dataset with tr_iou as new upper bound
-        metadata_file['fil_train_' + str(tr_iou)] = False
+        metadata_file['fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = False
         for va_iou in iou_valid:
             # create a filter array column for the new valid dataset with va_iou as new upper bound
-            metadata_file['fil_valid_' + str(va_iou)] = False
+            metadata_file['fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = False
             for te_iou in iou_test:
                 # create a filter array column for the new test dataset with te_iou as new upper bound
-                metadata_file['fil_test_' + str(te_iou)] = False
+                metadata_file['fil_test_' + str(te_iou) + "_" + str(lower_bound)] = False
                 for i, det in metadata_file.iterrows():
                     # for each detection, check whether it was train, valid or test
                     # if so then check for new upper and original lower bound to obtain a new filter array
                     if det['is_train']:
                         if det['iou'] > tr_iou:
-                            metadata_file.at[i, 'fil_train_' + str(tr_iou)] = True
+                            metadata_file.at[i, 'fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = True
                         elif det['iou'] < lower_bound:
-                            metadata_file.at[i, 'fil_train_' + str(tr_iou)] = True
+                            metadata_file.at[i, 'fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = True
                     elif det['is_valid']:
                         if det['iou'] > va_iou:
-                            metadata_file.at[i, 'fil_valid_' + str(va_iou)] = True
+                            metadata_file.at[i, 'fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = True
                         elif det['iou'] < lower_bound:
-                            metadata_file.at[i, 'fil_valid_' + str(va_iou)] = True
+                            metadata_file.at[i, 'fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = True
                     elif det['is_test']:
                         if det['iou'] > te_iou:
-                            metadata_file.at[i, 'fil_test_' + str(te_iou)] = True
+                            metadata_file.at[i, 'fil_test_' + str(te_iou) + "_" + str(lower_bound)] = True
                         elif det['iou'] < lower_bound:
-                            metadata_file.at[i, 'fil_valid_' + str(te_iou)] = True
+                            metadata_file.at[i, 'fil_valid_' + str(te_iou) + "_" + str(lower_bound)] = True
 
     return metadata_file
 
@@ -399,7 +409,7 @@ if __name__ == '__main__':
                          str(iou_range_labeling[1]) + "." + ".npy"), label_dataset_mot)
     np.save(os.path.join(output_folder, "features.npy"), feature_dataset_mot)
     np.save(os.path.join(output_folder, "knn.graph." + method_knn + ".npy"), knn_graph_dataset_mot)
-    meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_metadata.csv"), index=False)
+    meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_metadata.csv"), index=False, float_format='%g')
 
     end = time.time()
     hours, rem = divmod(end - start, 3600)
