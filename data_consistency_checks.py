@@ -98,10 +98,15 @@ def check_labeling(metadata_file, gt_file):
         gt_bbox = [rounded_metadata.iloc[i]['gt_x1'], rounded_metadata.iloc[i]['gt_y1'],
                    rounded_metadata.iloc[i]['gt_x1'] + rounded_metadata.iloc[i]['gt_w'],
                    rounded_metadata.iloc[i]['gt_y1'] + rounded_metadata.iloc[i]['gt_h']]
-        # if the gt bbox cord in metadata file are all -1 then the detection did not match with any gt bbox from the
-        # ground truth file (i.e. all IoUs were 0)
-        if gt_bbox_cord == [-1, -1, -1, -1]:
-            continue
+        # check for unassigned bboxes i.e. coordinates all -1, iou equal to 0 and label equal to -1
+        if gt_bbox_cord == [-1, -1, -1, -1] or rounded_metadata.iloc[i]['iou'] == 0 or rounded_metadata.iloc[i]['gt_labels'] == -1:
+            # check if all three conditions are met; if not notify user about which one violated
+            if gt_bbox_cord != [-1, -1, -1, -1]:
+                print("Non assigned detection in row " + str(i) + " is falsely assigned coordinates")
+            if rounded_metadata.iloc[i]['iou'] != 0:
+                print("Non assigned detection in row " + str(i) + " is falsely assigned iou above 0")
+            if rounded_metadata.iloc[i]['gt_labels'] != -1:
+                print("Non assigned detection in row " + str(i) + " is falsely assigned a label")
         else:
             # check if gt bbox in metadata file is in gt file, if not catch ValueError and notify user
             try:
@@ -112,6 +117,8 @@ def check_labeling(metadata_file, gt_file):
                 # check if corresponding bbox in gt file has same label; if not notify user
                 if gt_labels[gt_idx] != rounded_metadata.loc[i]['gt_labels']:
                     print("GT BBox label in row " + str(i) + " differs")
+                if rounded_metadata.loc[i]['is_background']:
+                    rounded_metadata.loc[i]['gt_labels']
                 # check if iou between det bbox and gt bbox can be reproduced; if not notify user
                 if np.round(iou(det_bbox, gt_bbox), 3) != rounded_metadata.iloc[i]['iou']:
                     print('IoU differ in row ' + str(i))
@@ -124,16 +131,36 @@ def check_labeling(metadata_file, gt_file):
 def check_splits(metadata_file):
     """
     Function that checks whether the splitting is consistent. That is it is checked whether:
-    1. A detection is never part of more than one split (class/ background/ excluded)
-    2. A detection is never part of more than one split (train/ valid/ test)
-    3. For each filtered iou column it is checked whether the record actually satifies the condition of being either
+    1. Splits are consistent with IoU and background labeling is consistent with chosen method
+    2. A detection is never part of more than one split (class/ background/ excluded)
+    3. A detection is never part of more than one split (train/ valid/ test)
+    4. For each filtered iou column it is checked whether the record actually satifies the condition of being either
     larger or smaller than the iou thresholds defined for the filtering
     """
     print('Checking Splits...')
     num_lines_det = len(metadata_file)
+    label_col = [col for col in metadata_file.columns if 'labels_' in col]
     # column names of all filtered columns (start with fil)
     fil_cols = [col for col in metadata_file.columns if 'fil' in col]
+    iou_upper = label_col.split("_")[-3]
+    iou_lower = label_col.split("_")[-2]
+    bg_handling = label_col.split("_")[-3]
     for i in range(len(metadata_file)):
+        # check for each type of split if it meets the iou criterion
+        if metadata_file.iloc[i]['is_class']:
+            if metadata_file.iloc[i]['iou'] <= iou_upper:
+                print("IoU does not satisfy is_class threshold in column row " + str(i))
+        # for background handling additionally check whether the labeling is consistent with the chosen method
+        if metadata_file.iloc[i]['is_background']:
+            if bg_handling == "zero":
+                if metadata_file.iloc[i][label_col] != 0:
+                    print("Labeling is inconsistent with background handling in column row " + str(i))
+            # TODO: come up with check-up for Singletons
+            if metadata_file.iloc[i]['iou'] >= iou_lower:
+                print("IoU does not satisfy is_background threshold in column row " + str(i))
+        if metadata_file.iloc[i]['is_excluded']:
+            if metadata_file.iloc[i]['iou'] > iou_upper or metadata_file.iloc[i]['iou'] < iou_lower:
+                print("IoU does not satisfy is_excluded threshold in column row " + str(i))
         # if more than one of the is_class, is_background and is_excluded column is true, then the user is notified
         if int(metadata_file.iloc[i]['is_class']) + int(metadata_file.iloc[i]['is_background']) + int(
                 metadata_file.iloc[i]['is_excluded']) > 1:
@@ -152,11 +179,11 @@ def check_splits(metadata_file):
             print("Row " + str(i) + "is included in no split (train/ valid/ test)!")
         # for the filter columns the thresholds are obtained via the column name (fil_[lower bound]_[upper bound])
         for fil_col in fil_cols:
-            iou_upper = float(fil_col.split("_")[-2])
-            iou_lower = float(fil_col.split("_")[-1])
+            fil_iou_upper = float(fil_col.split("_")[-2])
+            fil_iou_lower = float(fil_col.split("_")[-1])
             # if iou does not fit requirements of the filter column user is notified
-            if metadata_file.iloc[i][fil_col] and iou_lower <= metadata_file.iloc[i]['iou'] <= iou_upper:
-                print("IoU is larger than threshold in column " + fil_col + " row " + str(i))
+            if metadata_file.iloc[i][fil_col] and fil_iou_lower <= metadata_file.iloc[i]['iou'] <= fil_iou_upper:
+                print("IoU does not satisfy thresholds in filtered column " + fil_col + " row " + str(i))
         if i % 2500 == 0:
             print("Detection processed: " + str(i) + "/" + str(num_lines_det))
 
