@@ -21,7 +21,7 @@ def check_mod_det_file(det_file, mod_det_file):
 def get_all_metadata_files(filepath):
     """
     Function that returns the relative paths to all metadata files within a detector directory.
-    Return type is a list of strings
+    Return prediciton_type is a list of strings
     """
     output_files = []
     for filename in os.listdir(filepath):
@@ -146,7 +146,7 @@ def check_splits(metadata_file):
     iou_lower = label_col.split("_")[-2]
     bg_handling = label_col.split("_")[-3]
     for i in range(len(metadata_file)):
-        # check for each type of split if it meets the iou criterion
+        # check for each prediciton_type of split if it meets the iou criterion
         if metadata_file.iloc[i]['is_class']:
             if metadata_file.iloc[i]['iou'] <= iou_upper:
                 print("IoU does not satisfy is_class threshold in column row " + str(i))

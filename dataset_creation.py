@@ -9,9 +9,9 @@ from sklearn.neighbors import NearestNeighbors
 from torchvision import transforms, ops
 
 from resnet_modified import resnet50
-from utils import iou, ImageFolderWithPaths
+import utils
 
-pd.options.mode.chained_assignment = None
+pd.options.mode.chained_assignment = None  # default='warn'
 
 
 def create_meta_dataset(detection_file):
@@ -86,7 +86,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
             # save ground truth bounding box into array
             gt_bbox = [gt_line[2], gt_line[3], gt_line[2] + gt_line[4], gt_line[3] + gt_line[5]]
             # calculate iou between detection and ground truth bbox
-            curr_iou = iou(det_bbox, gt_bbox)
+            curr_iou = utils.iou(det_bbox, gt_bbox)
             # if iou is larger than any other previous observed iou (i.e. compare to one saved in iou_array)
             if curr_iou > iou_array[int(det_line[0])]:
                 # then make current iou new largest one and update iou_array as well as gt_bbox arrays
@@ -134,7 +134,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
     metadata_file['gt_y1'] = gt_y1
     metadata_file['gt_w'] = gt_w
     metadata_file['gt_h'] = gt_h
-    metadata_file['labels_' + iou_range[0] + "_" + iou_range[1] + "_" + background_handling] = labels
+    metadata_file['labels_' + str(iou_range[0]) + "_" + str(iou_range[1]) + "_" + background_handling] = labels
     metadata_file['is_class'] = class_array
     metadata_file['is_background'] = background_array
     metadata_file['is_excluded'] = excluded_array
@@ -172,12 +172,13 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     # and test via GroupShuffleSplit, ShuffleSplit and indexing.
     if split_by == "id":
         # create idx for classes
+        label_col = [col for col in metadata_file.columns if 'labels_' in col]
         train_idx, valid_test_idx = next(GroupShuffleSplit(train_size=split_ratio[0], n_splits=2, random_state=7)
-                                         .split(classes, groups=classes['labels']))
+                                         .split(classes, groups=classes[label_col[0]]))
         valid_idx, test_idx = next(GroupShuffleSplit(test_size=split_ratio[1] / (split_ratio[1] + split_ratio[2]),
                                                      n_splits=2, random_state=7)
                                    .split(classes.iloc[valid_test_idx, :],
-                                          groups=classes.iloc[valid_test_idx, :]['labels']))
+                                          groups=classes.iloc[valid_test_idx, :][label_col[0]]))
         # create idx for background
         train_bg_idx, valid_test_bg_idx = next(
             ShuffleSplit(train_size=split_ratio[0], n_splits=2, random_state=7).split(background))
@@ -214,7 +215,7 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     return metadata_file
 
 
-def create_feature_dataset(detection_file, image_folder, batch_size, gpu_name):
+def create_feature_dataset(detection_file, image_folder, batch_size, gpu_name, max_pool):
     """
     Function that creates for each detection a feature array using ResNet50 and RoI-Align.
     Each Image is feed into the resnet, which is modified to return the feature map before the first fc-layer as output.
@@ -232,13 +233,16 @@ def create_feature_dataset(detection_file, image_folder, batch_size, gpu_name):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     # load dataset using custom function that also returns the path of the image
-    dataset = ImageFolderWithPaths(root=image_folder, transform=preprocess)
+    dataset = utils.ImageFolderWithPaths(root=image_folder, transform=preprocess)
     # define data loader (currently only batch size 1 is supported)
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=1, shuffle=False)
     # define ResNet model using modified file
-    resnet_model = resnet50(pretrained=True).to(gpu_name)
     # define array that will hold output features
-    output_features = np.empty((len(detection_file), (2048 * 4 * 4)))
+    resnet_model = resnet50(pretrained=True).to(gpu_name)
+    if max_pool:
+        output_features = np.empty((len(detection_file), 2048))
+    else:
+        output_features = np.empty((len(detection_file), (2048 * 4 * 4)))
     # iterate through data loader
     for i, (data, target, paths) in enumerate(train_loader):
         # define input batch
@@ -266,13 +270,16 @@ def create_feature_dataset(detection_file, image_folder, batch_size, gpu_name):
         # send bboxes to cpu as Torch Tensor
         bboxes = torch.from_numpy(bboxes).to('cpu')
         # apply roi_align algorithm on top of bboxes to obtain the 4x4x2048 cropped bboxes
-        cropped_bboxes = ops.roi_align(feature_map, bboxes, (4, 4)).numpy()
+        cropped_bboxes = ops.roi_align(feature_map, bboxes, (4, 4))
+        # if pooling is wanted (i.e. only take highest value of each 4x4 array) then Pooling layer is applied
+        if max_pool:
+            pool = torch.nn.MaxPool3d((1, 4, 4))
+            cropped_bboxes = pool(cropped_bboxes)
         # flatten each cropped bbox and assign it to its position in the output features array
         for j, cropped_bbox in enumerate(cropped_bboxes):
             output_features[int(frame_detections[j, 0]), :] = cropped_bbox.flatten()
         if i % 100 == 0:
             print('Batch [{0}/{1}]'.format(i, len(train_loader)))
-
     return output_features
 
 
@@ -283,7 +290,7 @@ def create_knn_graph_dataset(features_file, neighbors, method):
     """
     print("Creating KNN Graph Dataset...")
     # create output array which is of size (no. detections, no. neighbors + 1)
-    output_knn_graph = np.empty((features_file.shape[0], no_neighbors + 1), dtype=int)
+    output_knn_graph = np.empty((features_file.shape[0], neighbors + 1), dtype=int)
     # create knn_graph object
     knn_graph = NearestNeighbors(n_neighbors=neighbors, n_jobs=16, algorithm=method)
     # fit the features data
@@ -336,6 +343,22 @@ def filter_dataset_for_iou(metadata_file, iou_train, iou_valid, iou_test, lower_
     return metadata_file
 
 
+def adjust_labeling(label_file):
+    """
+    Function that adjust the labeling of a labels file. Needed to avoid indexing errors during training of the GCN.
+    Substates the original labeling with a continuous one from 0 to num_labels in labels file. Does so by ordering the
+    labels in increasing order and creating a dictionary with its new labels.
+    """
+    # obtain list of all labels occurring in label file
+    unique_labels = np.unique(label_file)
+    # create an array from 0 to num_unique_labels (new labels)
+    new_labels = np.arange(len(unique_labels))
+    # create a dict from the two arrays and use it to substitute labels
+    label_dict = dict(zip(unique_labels, new_labels))
+    new_labels = np.array([label_dict[x] for x in label_file])
+    return new_labels
+
+
 if __name__ == '__main__':
     # Runtime parameters
     # Labels (Note that first value of iou_range needs to be smallest of train, valid and test iou)
@@ -347,14 +370,15 @@ if __name__ == '__main__':
     # Features
     # Currently only works with batch_size = 1
     batch_size_features = 1
-    gpu_name_features = "cuda:1"
+    gpu_name_features = "cuda:0"
+    pool = True
     # KNN
     method_knn = "brute"
     no_neighbors = 200
 
     # Detection parameters
-    sequence = "MOT/MOT17/MOT17-02"
-    detector = "sdp"
+    sequence = "MOT/MOT17/MOT17-04"
+    detector = "dpm"
 
     # Face Datasets for comparison
     # label_dataset_faces = np.load("data/facedata/512.labels.npy")
@@ -366,12 +390,11 @@ if __name__ == '__main__':
     det_file_mot = np.loadtxt(os.path.join("data", sequence, detector, "det.txt"), delimiter=",")
     gt_file_mot = np.loadtxt(os.path.join("data", sequence, "gt.txt"), delimiter=",")
 
-    # Folder variables´
+    # Folder variables
     output_folder = os.path.join("data", sequence, detector)
     image_folder_path = os.path.join("data", sequence, "images")
 
     mod_det_file_mot = create_modified_detection_file(detection_file=det_file_mot)
-
     meta_data_mot = create_meta_dataset(detection_file=mod_det_file_mot)
 
     label_dataset_mot, meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
@@ -386,17 +409,6 @@ if __name__ == '__main__':
                                             split_by="id"
                                             )
 
-    feature_dataset_mot = create_feature_dataset(detection_file=mod_det_file_mot,
-                                                 image_folder=image_folder_path,
-                                                 batch_size=batch_size_features,
-                                                 gpu_name=gpu_name_features
-                                                 )
-
-    knn_graph_dataset_mot = create_knn_graph_dataset(features_file=feature_dataset_mot,
-                                                     neighbors=no_neighbors,
-                                                     method=method_knn
-                                                     )
-
     meta_data_mot = filter_dataset_for_iou(metadata_file=meta_data_mot,
                                            iou_train=train_iou,
                                            iou_valid=valid_iou,
@@ -405,10 +417,6 @@ if __name__ == '__main__':
                                            )
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    np.save(os.path.join(output_folder, "labels." + bg_handling + "." + str(iou_range_labeling[0]) + "." +
-                         str(iou_range_labeling[1]) + "." + ".npy"), label_dataset_mot)
-    np.save(os.path.join(output_folder, "features.npy"), feature_dataset_mot)
-    np.save(os.path.join(output_folder, "knn.graph." + method_knn + ".npy"), knn_graph_dataset_mot)
     meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_metadata.csv"), index=False, float_format='%g')
 
     end = time.time()
