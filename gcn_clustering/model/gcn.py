@@ -34,8 +34,9 @@ class MeanAggregator(nn.Module):
         x = torch.bmm(A, features)
         return x
 
+
 """
-GraphConv class (declared with input dimensions and output dimensions and aggregation type
+GraphConv class (declared with input dimensions and output dimensions and aggregation prediciton_type
 """
 class GraphConv(nn.Module):
     def __init__(self, in_dim, out_dim, agg):
@@ -58,9 +59,11 @@ class GraphConv(nn.Module):
         """
         init.constant_(self.bias, 0)
         self.agg = agg()
+
     """
     Defines computation done at every call
     """
+
     def forward(self, features, A):
         b, n, d = features.shape
         # test if depth of tensor is same as input dimensions
@@ -77,9 +80,10 @@ class GraphConv(nn.Module):
 
 
 class gcn(nn.Module):
-    def __init__(self, cuda=True):
+    def __init__(self):
         super(gcn, self).__init__()
         # declare all elements of GCN
+        self.convReduce = nn.Conv1d(in_channels=2048, out_channels=512, kernel_size=1)
         self.bn0 = nn.BatchNorm1d(512, affine=False)
         self.conv1 = GraphConv(512, 512, MeanAggregator)
         self.conv2 = GraphConv(512, 512, MeanAggregator)
@@ -91,18 +95,22 @@ class gcn(nn.Module):
             nn.PReLU(256),
             nn.Linear(256, 2))
 
-    def forward(self, x, A, one_hop_idcs, train=True, cuda=True):
+    def forward(self, x, A, one_hop_idcs, args, train=True):
         # data normalization l2 -> bn
-        B, N, D = x.shape
         # xnorm = x.norm(2,2,keepdim=True) + 1e-8
         # xnorm = xnorm.expand_as(x)
         # x = x.div(xnorm)
+        # reshape tensor and apply reduction convolution
+        x = x.transpose(1, 2)
+        x = self.convReduce(x)
+        x = x.transpose(1, 2)
 
-        # batch normalize last element in feature matrix
-        x = x.view(-1, D)
+        B, N, D = x.shape
+        # reshape tensor for batch normalization
+        x = x.reshape(-1, D)
         x = self.bn0(x)
+        # reshape tensor for convolution
         x = x.view(B, N, D)
-
         # apply convolutions on x iteratively
         x = self.conv1(x, A)
         x = self.conv2(x, A)
@@ -112,11 +120,8 @@ class gcn(nn.Module):
         k1 = one_hop_idcs.size(-1)
         # obtain feature dimension
         dout = x.size(-1)
-        if cuda:
-            # create edge feature matrix of 1-hop neighbors
-            edge_feat = torch.zeros(B, k1, dout).cuda()
-        else:
-            edge_feat = torch.zeros(B, k1, dout)
+        # create edge feature matrix of 1-hop neighbors
+        edge_feat = torch.zeros(B, k1, dout).to(args.gpu)
         # fill for each 1-hop neighbor its features in matrix
         for b in range(B):
             edge_feat[b, :, :] = x[b, one_hop_idcs[b]]

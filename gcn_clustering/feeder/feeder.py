@@ -52,13 +52,13 @@ class Feeder(data.Dataset):
     and now the sub-graph has a fixed depth, i.e. 2
     '''
     # Once initialised data is loaded and parameters are set
-    def __init__(self, feat_path, knn_graph_path, label_path, seed=1, 
+    def __init__(self, features, knn_graph, labels, seed=1,
                  k_at_hop=[200,5], active_connection=5, train=True):
         np.random.seed(seed)
         random.seed(seed)
-        self.features = np.load(feat_path)
-        self.knn_graph = np.load(knn_graph_path)[:,:k_at_hop[0]+1]
-        self.labels = np.load(label_path)
+        self.features = features
+        self.knn_graph = knn_graph[:,:k_at_hop[0]+1]
+        self.labels = labels
         self.num_samples = len(self.features)
         self.depth = len(k_at_hop)
         self.k_at_hop = k_at_hop
@@ -93,7 +93,7 @@ class Feeder(data.Dataset):
         so at first iteration it is center node; updates the last element then with all neighbors belonging of a nn
         So in total it needs to go k1 times and saves for each its k2 neighbors
         """
-        for d in range(1,self.depth): 
+        for d in range(1,self.depth):
             hops.append(set())
             # [-2] refers to second to last element, [-1] refers to last element
             for nearest_neighbor in hops[-2]:

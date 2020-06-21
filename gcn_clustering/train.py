@@ -10,7 +10,6 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-import os
 import os.path as osp
 import sys
 import time
@@ -22,17 +21,17 @@ import torch.nn as nn
 from torch.backends import cudnn
 from torch.utils.data import DataLoader
 
-import model
-from feeder.feeder import Feeder
-from utils import to_numpy
-from utils.logging import Logger
-from utils.meters import AverageMeter
-from utils.serialization import save_checkpoint
+from . import model
+from .feeder.feeder import Feeder
+from .utils import to_numpy
+from .utils.logging import Logger
+from .utils.meters import AverageMeter
+from .utils.serialization import save_checkpoint
 
 from sklearn.metrics import precision_score, recall_score
 
 
-def main(args):
+def train_main(args):
     # Set start time for time measuring and seed for reproduceability
     start_time = time.time()
     np.random.seed(args.seed)
@@ -50,9 +49,9 @@ def main(args):
     # Call feeder that creates train data set using arguments; if instance is requested from trainset, it returns the
     # the features, adjacency matrix, center_idx, one_hop_idcs and edge_labels of the IPS; features contains h-hop
     # neigborhood
-    trainset = Feeder(args.feat_path,
-                      args.knn_graph_path,
-                      args.label_path,
+    trainset = Feeder(args.features,
+                      args.knn_graph,
+                      args.labels,
                       args.seed,
                       args.k_at_hop,
                       args.active_connection)
@@ -61,19 +60,14 @@ def main(args):
         trainset, batch_size=args.batch_size,
         num_workers=args.workers, shuffle=True, pin_memory=True)
     # if statement introduced to make CPU compatible; creates GCN model
-    if args.cuda:
-        net = model.gcn().cuda()
-    else:
-        net = model.gcn()
+
+    net = model.gcn().to(args.gpu)
     # declare optimizer (stochastic gradient descent) with learning rate, momentum and weight_decay (l2 penalty)
     opt = torch.optim.SGD(net.parameters(), args.lr,
                           momentum=args.momentum,
                           weight_decay=args.weight_decay)
     # if statement introduced to make CPU compatible; define loss function (CE loss)
-    if args.cuda:
-        criterion = nn.CrossEntropyLoss().cuda()
-    else:
-        criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss().to(args.gpu)
 
     # save state of network after each epoch as ckpt file (see utils.serialization)
     save_checkpoint({
@@ -86,10 +80,10 @@ def main(args):
         # print elapsed time until now
         print("Elapsed time: " + str(time.time() - start_time))
         # adjust learning rate at each new epoch
-        adjust_lr(opt, epoch)
+        adjust_lr(opt, epoch, args)
 
         # train model using parameters trainloader, network, criterion, optimizer and epoch number
-        train(trainloader, net, criterion, opt, epoch)
+        train(trainloader, net, criterion, opt, epoch, args)
         # after each epoch save state into file (is_best is set to false here)
         save_checkpoint({
             'state_dict': net.state_dict(),
@@ -99,7 +93,7 @@ def main(args):
     print("Final elapsed time: " + str(time.time() - start_time))
 
 
-def train(loader, net, crit, opt, epoch):
+def train(loader, net, crit, opt, epoch, args):
     # average meters used to compute average time for certain sections of application (see utils meters)
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -115,13 +109,10 @@ def train(loader, net, crit, opt, epoch):
     for i, ((feat, adj, cid, h1id), gtmat) in enumerate(loader):
         data_time.update(time.time() - end)
         # if statement for CPU-compability; iterate over all samples contained in batch to create one s
-        if args.cuda:
-            feat, adj, cid, h1id, gtmat = map(lambda x: x.cuda(), (feat, adj, cid, h1id, gtmat))
-        else:
-            feat, adj, cid, h1id, gtmat = map(lambda x: x, (feat, adj, cid, h1id, gtmat))
+        feat, adj, cid, h1id, gtmat = map(lambda x: x.to(args.gpu), (feat, adj, cid, h1id, gtmat))
 
         # call neural net using batch variables
-        pred = net(feat, adj, h1id, cuda=args.cuda)
+        pred = net(feat, adj, h1id, args)
         # create labels array from gtmat (true edge labels)
         labels = make_labels(gtmat).long()
         # compute loss, prcision, recall and accuracy
@@ -167,7 +158,7 @@ def make_labels(gtmat):
     return gtmat.view(-1)
 
 
-def adjust_lr(opt, epoch):
+def adjust_lr(opt, epoch, args):
     """
     Function to adjust learning rate inbetween. For first 4 epoch decreases the learning rate by factor of 10 and update
     optimizer's parameters accordingly
@@ -198,33 +189,33 @@ def accuracy(pred, label):
 
 
 if __name__ == '__main__':
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
     parser = argparse.ArgumentParser()
     # misc
-    working_dir = osp.dirname(osp.abspath(__file__)) 
-    parser.add_argument('--logs-dir', type=str, metavar='PATH', 
-                        default=osp.join(working_dir, 'logs'))
+    working_dir = osp.dirname(osp.abspath(__file__))
+    parser.add_argument('--logs-dir', type=str, metavar='PATH', default=osp.join(working_dir, 'logs', timestamp))
     parser.add_argument('--seed', default=1, type=int)
     parser.add_argument('--workers', default=24, type=int)
     parser.add_argument('--print_freq', default=1, type=int)
-    parser.add_argument('--cuda', default=True, type=bool)
+    parser.add_argument('--gpu', default='cuda:0', type=str)
 
     # Optimization args
     parser.add_argument('--lr', type=float, default=1e-2)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
     parser.add_argument('--epochs', type=int, default=4)
-    
+
     # Training args
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--feat_path', type=str, metavar='PATH',
-                        default=osp.join(working_dir, '../data/facedata/CASIA.feas.npy'))
+                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/dpm/features.pooled.npy'))
     parser.add_argument('--knn_graph_path', type=str, metavar='PATH',
-                        default=osp.join(working_dir, '../data/facedata/knn.graph.CASIA.kdtree.npy'))
+                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/dpm/knn.graph.pooled.brute.npy'))
     parser.add_argument('--label_path', type=str, metavar='PATH',
-                        default=osp.join(working_dir, '../data/facedata/CASIA.labels.npy'))
-    parser.add_argument('--k-at-hop', type=int, nargs='+', default=[200,10])
+                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/dpm/labels.zero.0.5.0.3.npy'))
+    parser.add_argument('--k-at-hop', type=int, nargs='+', default=[200, 10])
     parser.add_argument('--active_connection', type=int, default=10)
 
     args = parser.parse_args()
 
-    main(args)
+    train_main(args)

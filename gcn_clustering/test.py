@@ -22,13 +22,13 @@ import torch.nn.functional as F
 from torch.backends import cudnn
 from torch.utils.data import DataLoader
 
-import model
-from feeder.feeder import Feeder
-from utils import to_numpy
-from utils.meters import AverageMeter
-from utils.serialization import load_checkpoint
-from utils.utils import bcubed
-from utils.graph import graph_propagation, graph_propagation_soft, graph_propagation_naive
+from . import model
+from .feeder.feeder import Feeder
+from .utils import to_numpy
+from .utils.meters import AverageMeter
+from .utils.serialization import load_checkpoint
+from .utils.utils import bcubed
+from .utils.graph import graph_propagation, graph_propagation_soft, graph_propagation_naive
 
 from sklearn.metrics import normalized_mutual_info_score, precision_score, recall_score
 
@@ -52,17 +52,16 @@ def single_remove(Y, pred):
     return Y[remain_idcs], pred[remain_idcs]
 
 
-def main(args):
+def test_main(args):
     # same settings as training
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     cudnn.benchmark = True
 
     # initiate feeder but with training, false meaning that unique_nodes_list are also returned per instance
-
-    valset = Feeder(args.val_feat_path,
-                    args.val_knn_graph_path,
-                    args.val_label_path,
+    valset = Feeder(args.features,
+                    args.knn_graph,
+                    args.labels,
                     args.seed,
                     args.k_at_hop,
                     args.active_connection,
@@ -78,7 +77,7 @@ def main(args):
     net.load_state_dict(ckpt['state_dict'])
     # .cuda() copies CPU data to GPU. You probably don't want to keep the data in GPU all the time.
     # That means, you only store data in GPU when it's really necessary.
-    net = net.cuda()
+    net = net.to(args.gpu)
 
     # initialise knn-graph
     knn_graph = valset.knn_graph
@@ -91,7 +90,7 @@ def main(args):
     # define criterion
     criterion = nn.CrossEntropyLoss().cuda()
     # obtain edges and corresponding scores for network
-    edges, scores = validate(valloader, net, criterion)
+    edges, scores = validate(valloader, net, criterion, args)
 
     # save edges and scores as files
     np.save('edges', edges)
@@ -144,7 +143,7 @@ def make_labels(gtmat):
     return gtmat.view(-1)
 
 
-def validate(loader, net, crit):
+def validate(loader, net, crit, args):
     """
     Function to validate on dataset using trained network and criterion
     """
@@ -166,10 +165,9 @@ def validate(loader, net, crit):
     for i, ((feat, adj, pivot_ids, h1id, node_list), gtmat) in enumerate(loader):
         data_time.update(time.time() - end)
         # create variables for batch
-        feat, adj, pivot_ids, h1id, gtmat = map(lambda x: x.cuda(),
-                                          (feat, adj, pivot_ids, h1id, gtmat))
+        feat, adj, pivot_ids, h1id, gtmat = map(lambda x: x.to(args.gpu), (feat, adj, pivot_ids, h1id, gtmat))
         # use network to obtain predicted link likelihoods
-        pred = net(feat, adj, h1id)
+        pred = net(feat, adj, h1id, args)
         # obtain true labels
         labels = make_labels(gtmat).long()
         # compute loss
@@ -235,7 +233,7 @@ if __name__ == '__main__':
     working_dir = osp.dirname(osp.abspath(__file__))
     parser.add_argument('--seed', default=1, type=int)
     parser.add_argument('--workers', default=16, type=int)
-    parser.add_argument('--print_freq', default=40, type=int)
+    parser.add_argument('--print_freq', default=1, type=int)
 
     # Optimization args
     parser.add_argument('--lr', type=float, default=1e-5)
@@ -248,14 +246,14 @@ if __name__ == '__main__':
     parser.add_argument('--active_connection', type=int, default=5)
 
     # Validation args 
-    parser.add_argument('--val_feat_path', type=str, metavar='PATH',
+    parser.add_argument('--features', type=str, metavar='PATH',
                         default=osp.join(working_dir, '../data/facedata/1845.fea.npy'))
-    parser.add_argument('--val_knn_graph_path', type=str, metavar='PATH',
+    parser.add_argument('--knn_graph', type=str, metavar='PATH',
                         default=osp.join(working_dir, '../data/facedata/knn.graph.1845.bf.npy'))
-    parser.add_argument('--val_label_path', type=str, metavar='PATH',
+    parser.add_argument('--labels', type=str, metavar='PATH',
                         default=osp.join(working_dir, '../data/facedata/1845.labels.npy'))
 
     # Test args
     parser.add_argument('--checkpoint', type=str, metavar='PATH', default='./logs/epoch_4.ckpt')
     args = parser.parse_args()
-    main(args)
+    test_main(args)
