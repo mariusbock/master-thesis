@@ -185,7 +185,7 @@ def validate(loader, net, crit, args):
 
         batch_time.update(time.time() - end)
         end = time.time()
-        if i % args.print_freq == 0:
+        if i % args.print_freq == 0 or i+1 == len(loader):
             print('[{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -193,9 +193,9 @@ def validate(loader, net, crit, args):
                   'Accuracy {accs.val:.3f} ({accs.avg:.3f})\t'
                   'Precison {precisions.val:.3f} ({precisions.avg:.3f})\t'
                   'Recall {recalls.val:.3f} ({recalls.avg:.3f})'.format(
-                i, len(loader), batch_time=batch_time,
-                data_time=data_time, losses=losses, accs=accs,
-                precisions=precisions, recalls=recalls))
+                   i+1, len(loader), batch_time=batch_time,
+                   data_time=data_time, losses=losses, accs=accs,
+                   precisions=precisions, recalls=recalls))
 
         # convert unique nodes list of h-hop neighborhood to numpy array
         node_list = node_list.long().squeeze().numpy()
