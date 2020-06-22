@@ -173,22 +173,34 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     if split_by == "id":
         # create idx for classes
         label_col = [col for col in metadata_file.columns if 'labels_' in col]
-        train_idx, valid_test_idx = next(GroupShuffleSplit(train_size=split_ratio[0], n_splits=2, random_state=7)
+        train_idx, valid_test_idx = next(GroupShuffleSplit(train_size=split_ratio[0], n_splits=1, random_state=7)
                                          .split(classes, groups=classes[label_col[0]]))
         valid_idx, test_idx = next(GroupShuffleSplit(test_size=split_ratio[1] / (split_ratio[1] + split_ratio[2]),
-                                                     n_splits=2, random_state=7)
+                                                     n_splits=1, random_state=7)
                                    .split(classes.iloc[valid_test_idx, :],
                                           groups=classes.iloc[valid_test_idx, :][label_col[0]]))
         # create idx for background
-        train_bg_idx, valid_test_bg_idx = next(
-            ShuffleSplit(train_size=split_ratio[0], n_splits=2, random_state=7).split(background))
-        valid_bg_idx, test_bg_idx = next(
-            ShuffleSplit(test_size=split_ratio[1] / (split_ratio[1] + split_ratio[2]), n_splits=2,
-                         random_state=7).split(background.iloc[valid_test_bg_idx, :]))
-        print("CLASSES IDX (TRAIN/ VALID/ TEST):")
-        print(train_idx.shape, valid_idx.shape, test_idx.shape)
-        print("BACKGROUND IDX (TRAIN/ VALID/ TEST):")
-        print(train_bg_idx.shape, valid_bg_idx.shape, test_bg_idx.shape)
+        try:
+            train_bg_idx, valid_test_bg_idx = next(
+                ShuffleSplit(train_size=split_ratio[0], n_splits=1, random_state=7).split(background))
+            valid_bg_idx, test_bg_idx = next(
+                ShuffleSplit(test_size=split_ratio[1] / (split_ratio[1] + split_ratio[2]), n_splits=1,
+                             random_state=7).split(background.iloc[valid_test_bg_idx, :]))
+
+            # split background attribute into train, valid and test using indeces obtained above
+            train_bg = background.iloc[train_bg_idx, :]
+            train_bg['is_train'] = True
+            valid_bg = background.iloc[valid_test_bg_idx, :].iloc[valid_bg_idx, :]
+            valid_bg['is_valid'] = True
+            test_bg = background.iloc[valid_test_bg_idx, :].iloc[test_bg_idx, :]
+            test_bg['is_test'] = True
+        # this exception is needed if the background detections are very small (which will cause the ShuffleSplit to
+        # not work. If this is the case, the background is just split equally and not using ratios.
+        except ValueError:
+            train_bg, valid_bg, test_bg = np.array_split(background, 3)
+            train_bg['is_train'] = True
+            valid_bg['is_valid'] = True
+            test_bg['is_test'] = True
     elif split_by == "frame":
         print("CURRENTLY NOT SUPPORTED")
 
@@ -199,14 +211,6 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     valid_classes['is_valid'] = True
     test_classes = classes.iloc[valid_test_idx, :].iloc[test_idx, :]
     test_classes['is_test'] = True
-
-    # split background attribute into train, valid and test using indeces obtained above
-    train_bg = background.iloc[train_bg_idx, :]
-    train_bg['is_train'] = True
-    valid_bg = background.iloc[valid_test_bg_idx, :].iloc[valid_bg_idx, :]
-    valid_bg['is_valid'] = True
-    test_bg = background.iloc[valid_test_bg_idx, :].iloc[test_bg_idx, :]
-    test_bg['is_test'] = True
 
     # reconstruct metadata file
     metadata_file = pd.concat(
@@ -378,7 +382,7 @@ if __name__ == '__main__':
 
     # Detection parameters
     sequence = "MOT/MOT17/MOT17-04"
-    detector = "dpm"
+    detector = "sdp"
 
     # Face Datasets for comparison
     # label_dataset_faces = np.load("data/facedata/512.labels.npy")
@@ -387,6 +391,7 @@ if __name__ == '__main__':
 
     start = time.time()
 
+    # load detection and ground truth file
     det_file_mot = np.loadtxt(os.path.join("data", sequence, detector, "det.txt"), delimiter=",")
     gt_file_mot = np.loadtxt(os.path.join("data", sequence, "gt.txt"), delimiter=",")
 
@@ -394,9 +399,11 @@ if __name__ == '__main__':
     output_folder = os.path.join("data", sequence, detector)
     image_folder_path = os.path.join("data", sequence, "images")
 
+    # create modified detection file and initialise metadata file
     mod_det_file_mot = create_modified_detection_file(detection_file=det_file_mot)
     meta_data_mot = create_meta_dataset(detection_file=mod_det_file_mot)
 
+    # create label dataset and metadata file
     label_dataset_mot, meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
                                                             ground_truth_file=gt_file_mot,
                                                             metadata_file=meta_data_mot,
@@ -404,11 +411,13 @@ if __name__ == '__main__':
                                                             background_handling=bg_handling
                                                             )
 
+    # create train valid and test split and extend metadata file with filter arrays
     meta_data_mot = create_train_valid_test(metadata_file=meta_data_mot,
                                             split_ratio=[0.8, 0.1, 0.1],
                                             split_by="id"
                                             )
 
+    # use filter arrays to create different filter arrays that follow different iou thresholds
     meta_data_mot = filter_dataset_for_iou(metadata_file=meta_data_mot,
                                            iou_train=train_iou,
                                            iou_valid=valid_iou,
@@ -416,6 +425,7 @@ if __name__ == '__main__':
                                            lower_bound=iou_range_labeling[1]
                                            )
 
+    # save metadata file with current timestamp
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_metadata.csv"), index=False, float_format='%g')
 
