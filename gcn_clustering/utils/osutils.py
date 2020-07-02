@@ -6,6 +6,7 @@ import errno
 Used for logging not really relevant
 """
 
+
 def mkdir_if_missing(dir_path):
     try:
         os.makedirs(dir_path)

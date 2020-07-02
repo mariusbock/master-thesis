@@ -1,5 +1,6 @@
-import argparse
 import os
+import os.path as osp
+import sys
 import time
 
 import numpy as np
@@ -8,179 +9,528 @@ import pandas as pd
 from gcn_clustering.train import train_main
 from gcn_clustering.test import test_main
 
-from dataset_creation import create_modified_detection_file, create_feature_dataset, create_knn_graph_dataset, adjust_labeling
+from dataset_creation import create_knn_graph_dataset
+from gcn_clustering.utils.logging import Logger
+from gcn_clustering.utils.osutils import mkdir_if_missing
 
+# general
+from misc import adjust_labeling, create_train_args, create_test_args, create_prediction_output_file
 
-def create_args(detector_name, date_string, timestamp_string, seed, workers, print_freq, gpu, lr, momentum, weight_decay, epochs, batch_size,
-                features, knn_graph, labels, k_at_hop, active_connection):
-    """
-    Function that creates arguments object that is needed for calling the training/ testing method of the GCN clustering
-    detector = detector name, date and timestamp = needed for creating the proper folders
-    """
-    parser = argparse.ArgumentParser()
+date = time.strftime("%Y%m%d")
+timestamp = time.strftime("%H%M%S")
+directory = '../data/MOT/MOT17'
 
-    # misc
-    parser.add_argument('--logs-dir', type=str, metavar='PATH',
-                        default=os.path.join('../logs', date_string, timestamp_string + '-' + detector_name))
-    parser.add_argument('--seed', default=seed, type=int)
-    parser.add_argument('--workers', default=workers, type=int)
-    parser.add_argument('--print_freq', default=print_freq, type=int)
-    parser.add_argument('--gpu', default=gpu, type=str)
+train_sequence = 'MOT17-04'
+val_sequence = 'MOT17-04'
+test_sequence = 'MOT17-02'
 
-    # Optimization args
-    parser.add_argument('--lr', type=float, default=lr)
-    parser.add_argument('--momentum', type=float, default=momentum)
-    parser.add_argument('--weight_decay', type=float, default=weight_decay)
-    parser.add_argument('--epochs', type=int, default=epochs)
+# metadata paths training
+path_meta_train_dpm = '20200630-133314_train_valid_metadata.csv'
+path_meta_train_frcnn = '20200630-140039_train_valid_metadata.csv'
+path_meta_train_sdp = '20200630-143448_train_valid_metadata.csv'
 
-    # Training args
-    parser.add_argument('--batch_size', type=int, default=batch_size)
-    parser.add_argument('--features', default=features)
-    parser.add_argument('--knn_graph', default=knn_graph)
-    parser.add_argument('--labels', default=labels)
-    parser.add_argument('--k-at-hop', type=int, nargs='+', default=k_at_hop)
-    parser.add_argument('--active_connection', type=int, default=active_connection)
+# metadata paths validation
+path_meta_val_dpm = '20200630-133314_train_valid_metadata.csv'
+path_meta_val_frcnn = '20200630-140039_train_valid_metadata.csv'
+path_meta_val_sdp = '20200630-143448_train_valid_metadata.csv'
 
-    parser.add_argument('--checkpoint', type=str, metavar='PATH',
-                        default=os.path.join('../logs', date_string, timestamp_string + '-' + detector_name, 'epoch_4.ckpt'))
-    args = parser.parse_args()
-    return args
+# metadata paths testing
+path_meta_test_dpm = '20200630-143631_test_metadata.csv'
+path_meta_test_frcnn = '20200630-144345_test_metadata.csv'
+path_meta_test_sdp = '20200630-144032_test_metadata.csv'
 
+# parameters
+# general
+gpu_name = 'cuda:3'
+workers = 20
+print_freq = 100
+seed = 1
+knn = 200
+knn_method = 'brute'
+input_channels = 2048 + 5
 
-if __name__ == '__main__':
-    # experiment parameters
-    date = time.strftime("%Y%m%d")
-    timestamp = time.strftime("%H%M%S")
-    sequence = 'MOT/MOT17/MOT17-04'
-    detector = 'sdp'
-    metadata_path = '20200621-180259_metadata.csv'
-    image_folder_path = os.path.join('../data', sequence, 'images')
+label_column_train = 'labels_0.5_0.3_zero'
+label_column_valid = 'labels_0.5_0.3_zero'
+label_column_test = 'labels_0.5_0.3_zero'
 
-    # feature creation parameters
-    batch_size_features = 1
-    gpu_name = 'cuda:0'
-    max_pool = True
+iou_column_train = 'fil_train_0.7_0.3'
+iou_column_valid = 'fil_valid_0.7_0.3'
+iou_column_test = 'is_included'
 
-    # Face Datasets for comparison
-    # label_dataset_faces = np.load("../data/facedata/512.labels.npy")
-    # feature_dataset_faces = np.load("../data/facedata/512.fea.npy")
-    # knn_graph_faces = np.load("../data/facedata/knn.graph.512.bf.npy")
+# training
+k_at_hop_training = [200, 10]
+active_connections_training = 10
+batch_size_training = 16
+epochs_training = 4
+weight_decay_training = 1e-4
+momentum_training = 0.9
+learning_rate_training = 1e-2
+save_checkpoints = False
 
-    metadata_file = pd.read_csv(os.path.join('../data', sequence, detector, metadata_path))
-    detection_file = create_modified_detection_file(np.loadtxt(os.path.join('../data', sequence, detector, 'det.txt'), delimiter=","))
+# validation/ testing
+k_at_hop_testing = [20, 5]
+active_connections_testing = 5
+learning_rate_testing = 1e-5
+momentum_testing = 0.9
+weight_decay_testing = 1e-4
+epochs_testing = 20
+batch_size_testing = 32
+use_checkpoint = False
 
-    # obtain labels from metadata file and save to numpy array
-    full_labels = metadata_file[metadata_file.columns[pd.Series(metadata_file.columns).str.startswith('labels')]].iloc[:, 0].to_numpy()
+dpm_checkpoint = osp.join('../logs', 'trained_appearance_dpm.ckpt')
+frcnn_checkpoint = osp.join('../logs', 'trained_appearance_frcnn.ckpt')
+sdp_checkpoint = osp.join('../logs', 'trained_appearance_sdp.ckpt')
 
-    # create splits and adjust labeling so that it goes from 0 to num_classes in split
-    train_labels = adjust_labeling(full_labels[metadata_file['fil_train_0.7_0.3']])
-    val_labels = adjust_labeling(full_labels[metadata_file['fil_valid_0.7_0.3']])
-    test_labels = adjust_labeling(full_labels[metadata_file['fil_test_0.5_0.3']])
+# load metadata files
+meta_train_dpm = pd.read_csv(osp.join(directory, train_sequence + '-DPM', path_meta_train_dpm))
+meta_train_frcnn = pd.read_csv(osp.join(directory, train_sequence + '-FRCNN', path_meta_train_frcnn))
+meta_train_sdp = pd.read_csv(osp.join(directory, train_sequence + '-SDP', path_meta_train_sdp))
 
-    # create features and apply splits
-    full_features = create_feature_dataset(detection_file, image_folder_path, batch_size_features, gpu_name, max_pool)
+meta_val_dpm = pd.read_csv(osp.join(directory, val_sequence + '-DPM', path_meta_val_dpm))
+meta_val_frcnn = pd.read_csv(osp.join(directory, val_sequence + '-FRCNN', path_meta_val_frcnn))
+meta_val_sdp = pd.read_csv(osp.join(directory, val_sequence + '-SDP', path_meta_val_sdp))
 
-    train_features = full_features[metadata_file['fil_train_0.7_0.3']]
-    val_features = full_features[metadata_file['fil_valid_0.7_0.3']]
-    test_features = full_features[metadata_file['fil_test_0.5_0.3']]
+meta_test_dpm = pd.read_csv(osp.join(directory, test_sequence + '-DPM', path_meta_test_dpm))
+meta_test_frcnn = pd.read_csv(osp.join(directory, test_sequence + '-FRCNN', path_meta_test_frcnn))
+meta_test_sdp = pd.read_csv(osp.join(directory, test_sequence + '-SDP', path_meta_test_sdp))
 
-    # this section checks whether the train/ test/ valid splits are too small for creating a KNN graph with 200
-    # neighbors. if there are more than 200 instances then one can create a KNN graph with 200 nearest neighbors
-    # if there are less instances the maximum size knn graph is created (i.e. len(split))
-    train_neighbors = len(train_labels)
-    val_neighbors = len(train_labels)
-    test_neighbors = len(train_labels)
+# load appearance features
+train_feat_app_dpm = np.load(osp.join(directory, train_sequence + '-DPM', 'feat_app_pool.npy'))
+train_feat_app_frcnn = np.load(osp.join(directory, train_sequence + '-FRCNN', 'feat_app_pool.npy'))
+train_feat_app_sdp = np.load(os.path.join(directory, train_sequence + '-SDP', 'feat_app_pool.npy'))
 
-    if len(train_labels) > 200:
-        train_neighbors = 200
-    if len(val_labels) > 200:
-        val_neighbors = 200
-    if len(test_labels) > 200:
-        test_neighbors = 200
+val_feat_app_dpm = np.load(os.path.join(directory, val_sequence + '-DPM', 'feat_app_pool.npy'))
+val_feat_app_frcnn = np.load(os.path.join(directory, val_sequence + '-FRCNN', 'feat_app_pool.npy'))
+val_feat_app_sdp = np.load(os.path.join(directory, val_sequence + '-SDP', 'feat_app_pool.npy'))
 
-    # create knn graphs for each split (ensures labeling is correct)
-    train_knn_graph = create_knn_graph_dataset(train_features, train_neighbors, 'brute')
-    val_knn_graph = create_knn_graph_dataset(val_features, val_neighbors, 'brute')
-    test_knn_graph = create_knn_graph_dataset(test_features, test_neighbors, 'brute')
+test_feat_app_dpm = np.load(os.path.join(directory, test_sequence + '-DPM', 'feat_app_pool.npy'))
+test_feat_app_frcnn = np.load(os.path.join(directory, test_sequence + '-FRCNN', 'feat_app_pool.npy'))
+test_feat_app_sdp = np.load(os.path.join(directory, test_sequence + '-SDP', 'feat_app_pool.npy'))
 
-    # print shapes of files
-    print("TRAIN SHAPES")
-    print(train_labels.shape)
-    print(train_features.shape)
-    print(train_knn_graph.shape)
+# load spatial features
+train_feat_spa_dpm = np.load(os.path.join(directory, train_sequence + '-DPM', 'feat_spa.npy'))
+train_feat_spa_frcnn = np.load(os.path.join(directory, train_sequence + '-FRCNN', 'feat_spa.npy'))
+train_feat_spa_sdp = np.load(os.path.join(directory, train_sequence + '-SDP', 'feat_spa.npy'))
 
-    print("VALID SHAPES")
-    print(val_labels.shape)
-    print(val_features.shape)
-    print(val_knn_graph.shape)
+val_feat_spa_dpm = np.load(os.path.join(directory, val_sequence + '-DPM', 'feat_spa.npy'))
+val_feat_spa_frcnn = np.load(os.path.join(directory, val_sequence + '-FRCNN', 'feat_spa.npy'))
+val_feat_spa_sdp = np.load(os.path.join(directory, val_sequence + '-SDP', 'feat_spa.npy'))
 
-    print("TEST SHAPES")
-    print(test_labels.shape)
-    print(test_features.shape)
-    print(test_knn_graph.shape)
+test_feat_spa_dpm = np.load(os.path.join(directory, test_sequence + '-DPM', 'feat_spa.npy'))
+test_feat_spa_frcnn = np.load(os.path.join(directory, test_sequence + '-FRCNN', 'feat_spa.npy'))
+test_feat_spa_sdp = np.load(os.path.join(directory, test_sequence + '-SDP', 'feat_spa.npy'))
 
-    # training
-    train_args = create_args(detector_name=detector,
-                             date_string=date,
-                             timestamp_string=timestamp,
-                             seed=1,
-                             workers=16,
-                             print_freq=100,
-                             gpu=gpu_name,
-                             lr=1e-2,
-                             momentum=0.9,
-                             weight_decay=1e-4,
-                             epochs=4,
-                             batch_size=16,
-                             features=train_features,
-                             knn_graph=train_knn_graph,
-                             labels=train_labels,
-                             k_at_hop=[200, 10],
-                             active_connection=10,
-                             )
+# create combined feature dataset
+train_feat_comb_dpm = np.concatenate((train_feat_app_dpm, train_feat_spa_dpm), axis=1)
+train_feat_comb_frcnn = np.concatenate((train_feat_app_frcnn, train_feat_spa_frcnn), axis=1)
+train_feat_comb_sdp = np.concatenate((train_feat_app_sdp, train_feat_spa_sdp), axis=1)
 
-    train_main(train_args)
+valid_feat_comb_dpm = np.concatenate((val_feat_app_dpm, val_feat_spa_dpm), axis=1)
+valid_feat_comb_frcnn = np.concatenate((val_feat_app_frcnn, val_feat_spa_frcnn), axis=1)
+valid_feat_comb_sdp = np.concatenate((val_feat_app_sdp, val_feat_spa_sdp), axis=1)
 
-    # validation
-    val_args = create_args(detector_name=detector,
-                           timestamp_string=timestamp,
-                           date_string=date,
-                           seed=1,
-                           workers=16,
-                           print_freq=100,
-                           gpu=gpu_name,
-                           lr=1e-5,
-                           momentum=0.9,
-                           weight_decay=1e-4,
-                           epochs=20,
-                           batch_size=32,
-                           features=val_features,
-                           knn_graph=val_knn_graph,
-                           labels=val_labels,
-                           k_at_hop=[20, 5],
-                           active_connection=5
-                           )
+test_feat_comb_dpm = np.concatenate((test_feat_app_dpm, test_feat_spa_dpm), axis=1)
+test_feat_comb_frcnn = np.concatenate((test_feat_app_frcnn, test_feat_spa_frcnn), axis=1)
+test_feat_comb_sdp = np.concatenate((test_feat_app_sdp, test_feat_spa_sdp), axis=1)
 
-    test_main(val_args)
+# CHOOSE HERE WHICH ONES TO USE
+train_feat_dpm = train_feat_comb_dpm
+train_feat_frcnn = train_feat_comb_frcnn
+train_feat_sdp = train_feat_comb_sdp
 
-    # testing
-    test_args = create_args(detector_name=detector,
-                            timestamp_string=timestamp,
-                            date_string=date,
-                            seed=1,
-                            workers=16,
-                            print_freq=100,
-                            gpu=gpu_name,
-                            lr=1e-5,
-                            momentum=0.9,
-                            weight_decay=1e-4,
-                            epochs=20,
-                            batch_size=32,
-                            features=test_features,
-                            knn_graph=test_knn_graph,
-                            labels=test_labels,
-                            k_at_hop=[20, 5],
-                            active_connection=5
-                            )
+val_feat_dpm = valid_feat_comb_dpm
+val_feat_frcnn = valid_feat_comb_frcnn
+val_feat_sdp = valid_feat_comb_sdp
 
-    test_main(test_args)
+test_feat_dpm = test_feat_comb_dpm
+test_feat_frcnn = test_feat_comb_frcnn
+test_feat_sdp = test_feat_comb_sdp
+
+del train_feat_app_dpm, train_feat_app_frcnn, train_feat_app_sdp, val_feat_app_dpm, val_feat_app_frcnn, \
+    val_feat_app_sdp, test_feat_app_dpm, test_feat_app_frcnn, test_feat_app_sdp, train_feat_spa_dpm, \
+    train_feat_spa_frcnn, train_feat_spa_sdp, val_feat_spa_dpm, val_feat_spa_frcnn, val_feat_spa_sdp, \
+    test_feat_spa_dpm, test_feat_spa_frcnn, test_feat_spa_sdp, train_feat_comb_dpm, train_feat_comb_frcnn, \
+    train_feat_comb_sdp, valid_feat_comb_dpm, valid_feat_comb_frcnn, valid_feat_comb_sdp, test_feat_comb_dpm, \
+    test_feat_comb_frcnn, test_feat_comb_sdp
+
+# saves logs to a file (standard output redirected)
+sys.stdout = Logger(os.path.join('../logs', date, timestamp, 'log.txt'))
+
+####################################################################################################################
+# Summary of settings for log purposes:
+
+print('Training using: ' + train_sequence)
+print('Training meta (DPM): ' + path_meta_train_dpm)
+print('Training meta (FRCNN): ' + path_meta_train_frcnn)
+print('Training meta (SDP): ' + path_meta_train_sdp)
+
+print('Validating using: ' + val_sequence)
+print('Validation meta (DPM): ' + path_meta_val_dpm)
+print('Validation meta (FRCNN): ' + path_meta_val_frcnn)
+print('Validation meta (SDP): ' + path_meta_val_sdp)
+
+print('Testing using: ' + test_sequence)
+print('Testing meta (DPM): ' + path_meta_test_dpm)
+print('Testing meta (FRCNN): ' + path_meta_test_frcnn)
+print('Testing meta (SDP): ' + path_meta_test_sdp)
+
+########################################################################################################################
+
+print('START TRAINING DPM DETECTOR.....')
+# create splits and adjust labeling so that it goes from 0 to num_classes in split
+train_labels_dpm = adjust_labeling(meta_train_dpm[label_column_train].to_numpy()[meta_train_dpm[iou_column_train]])
+val_labels_dpm = adjust_labeling(meta_val_dpm[label_column_valid].to_numpy()[meta_val_dpm[iou_column_valid]])
+test_labels_dpm = adjust_labeling(meta_test_dpm[label_column_test].to_numpy()[meta_test_dpm[iou_column_test]])
+
+train_feat_dpm = train_feat_dpm[meta_train_dpm[iou_column_train]]
+val_feat_dpm = val_feat_dpm[meta_val_dpm[iou_column_valid]]
+test_feat_dpm = test_feat_dpm[meta_test_dpm[iou_column_test]]
+
+# create knn graphs for each split (ensures labeling is correct)
+# first checks whether the train/ test/ valid splits are too small for creating a KNN graph.
+# if there are less instances the maximum size knn graph is created (i.e. len(split))
+
+if len(train_labels_dpm) > knn:
+    train_knn_graph_dpm = create_knn_graph_dataset(train_feat_dpm, knn, knn_method)
+else:
+    train_knn_graph_dpm = create_knn_graph_dataset(train_feat_dpm, len(train_labels_dpm), knn_method)
+if len(val_labels_dpm) > knn:
+    val_knn_graph_dpm = create_knn_graph_dataset(val_feat_dpm, knn, knn_method)
+else:
+    val_knn_graph_dpm = create_knn_graph_dataset(val_feat_dpm, len(val_labels_dpm), knn_method)
+if len(test_labels_dpm) > knn:
+    test_knn_graph_dpm = create_knn_graph_dataset(test_feat_dpm, knn, knn_method)
+else:
+    test_knn_graph_dpm = create_knn_graph_dataset(test_feat_dpm, len(test_labels_dpm), knn_method)
+
+# print shapes of files
+print("TRAIN SHAPES DPM")
+print(train_labels_dpm.shape)
+print(train_feat_dpm.shape)
+print(train_knn_graph_dpm.shape)
+
+print("VALID SHAPES DPM")
+print(val_labels_dpm.shape)
+print(val_feat_dpm.shape)
+print(val_knn_graph_dpm.shape)
+
+print("TEST SHAPES DPM")
+print(test_labels_dpm.shape)
+print(test_feat_dpm.shape)
+print(test_knn_graph_dpm.shape)
+
+# training
+train_args_dpm = create_train_args(input_channels=input_channels,
+                                   seed=seed,
+                                   workers=workers,
+                                   print_freq=print_freq,
+                                   gpu=gpu_name,
+                                   lr=learning_rate_training,
+                                   momentum=momentum_training,
+                                   weight_decay=weight_decay_training,
+                                   epochs=epochs_training,
+                                   batch_size=batch_size_training,
+                                   features=train_feat_dpm,
+                                   knn_graph=train_knn_graph_dpm,
+                                   labels=train_labels_dpm,
+                                   k_at_hop=k_at_hop_training,
+                                   active_connection=active_connections_training,
+                                   save_checkpoints=save_checkpoints,
+                                   checkpoint_directory=dpm_checkpoint
+                                   )
+
+train_state_dict_dpm = train_main(train_args_dpm)
+
+# validation
+val_args_dpm = create_test_args(seed=seed,
+                                workers=workers,
+                                print_freq=print_freq,
+                                gpu=gpu_name,
+                                lr=learning_rate_testing,
+                                momentum=momentum_testing,
+                                weight_decay=weight_decay_testing,
+                                epochs=epochs_testing,
+                                batch_size=batch_size_testing,
+                                features=val_feat_dpm,
+                                knn_graph=val_knn_graph_dpm,
+                                labels=val_labels_dpm,
+                                k_at_hop=k_at_hop_testing,
+                                active_connection=active_connections_testing,
+                                use_checkpoint=use_checkpoint,
+                                checkpoint_directory=dpm_checkpoint,
+                                input_channels=input_channels
+                                )
+
+_, _ = test_main(train_state_dict_dpm, val_args_dpm)
+
+# testing
+test_args_dpm = create_test_args(seed=seed,
+                                 workers=workers,
+                                 print_freq=print_freq,
+                                 gpu=gpu_name,
+                                 lr=learning_rate_testing,
+                                 momentum=momentum_testing,
+                                 weight_decay=weight_decay_testing,
+                                 epochs=epochs_testing,
+                                 batch_size=batch_size_testing,
+                                 features=test_feat_dpm,
+                                 knn_graph=test_knn_graph_dpm,
+                                 labels=test_labels_dpm,
+                                 k_at_hop=k_at_hop_testing,
+                                 active_connection=active_connections_testing,
+                                 use_checkpoint=use_checkpoint,
+                                 checkpoint_directory=dpm_checkpoint,
+                                 input_channels=input_channels
+                                 )
+
+test_pred_dpm, test_pred_removed_dpm = test_main(train_state_dict_dpm, test_args_dpm)
+mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-DPM'))
+
+test_pred_dpm = create_prediction_output_file(meta_test_dpm, test_pred_dpm)
+test_pred_removed_dpm = test_pred_removed_dpm
+
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-DPM', 'eval_input_full.npy'), test_pred_dpm, delimiter=' ')
+np.save(os.path.join('../logs', date, timestamp, test_sequence + '-DPM', 'pred_removed.npy'), test_pred_removed_dpm)
+
+del train_labels_dpm, val_labels_dpm, test_labels_dpm, train_feat_dpm, val_feat_dpm, train_knn_graph_dpm, \
+    val_knn_graph_dpm, test_knn_graph_dpm, meta_train_dpm, meta_val_dpm, meta_test_dpm, test_pred_dpm, \
+    test_pred_removed_dpm, train_state_dict_dpm, train_args_dpm, val_args_dpm, test_args_dpm
+
+########################################################################################################################
+
+print('START TRAINING FRCNN DETECTOR.....')
+
+# create splits and adjust labeling so that it goes from 0 to num_classes in split
+train_labels_frcnn = adjust_labeling(meta_train_frcnn[label_column_train].to_numpy()[meta_train_frcnn[iou_column_train]])
+val_labels_frcnn = adjust_labeling(meta_val_frcnn[label_column_valid].to_numpy()[meta_val_frcnn[iou_column_valid]])
+test_labels_frcnn = adjust_labeling(meta_test_frcnn[label_column_test].to_numpy()[meta_test_frcnn[iou_column_test]])
+
+train_feat_frcnn = train_feat_frcnn[meta_train_frcnn[iou_column_train]]
+val_feat_frcnn = val_feat_frcnn[meta_val_frcnn[iou_column_valid]]
+test_feat_frcnn = test_feat_frcnn[meta_test_frcnn[iou_column_test]]
+
+# create knn graphs for each split (ensures labeling is correct)
+# first checks whether the train/ test/ valid splits are too small for creating a KNN graph.
+# if there are less instances the maximum size knn graph is created (i.e. len(split))
+if len(train_labels_frcnn) > knn:
+    train_knn_graph_frcnn = create_knn_graph_dataset(train_feat_frcnn, knn, knn_method)
+else:
+    train_knn_graph_frcnn = create_knn_graph_dataset(train_feat_frcnn, len(train_labels_frcnn), knn_method)
+if len(val_labels_frcnn) > knn:
+    val_knn_graph_frcnn = create_knn_graph_dataset(val_feat_frcnn, knn, knn_method)
+else:
+    val_knn_graph_frcnn = create_knn_graph_dataset(val_feat_frcnn, len(val_labels_frcnn), knn_method)
+if len(test_labels_frcnn) > knn:
+    test_knn_graph_frcnn = create_knn_graph_dataset(test_feat_frcnn, knn, knn_method)
+else:
+    test_knn_graph_frcnn = create_knn_graph_dataset(test_feat_frcnn, len(test_labels_frcnn), knn_method)
+
+# print shapes of files
+print("TRAIN SHAPES FRCNN")
+print(train_labels_frcnn.shape)
+print(train_feat_frcnn.shape)
+print(train_knn_graph_frcnn.shape)
+
+print("VALID SHAPES FRCNN")
+print(val_labels_frcnn.shape)
+print(val_feat_frcnn.shape)
+print(val_knn_graph_frcnn.shape)
+
+print("TEST SHAPES FRCNN")
+print(test_labels_frcnn.shape)
+print(test_feat_frcnn.shape)
+print(test_knn_graph_frcnn.shape)
+
+# training
+train_args_frcnn = create_train_args(input_channels=input_channels,
+                                     seed=seed,
+                                     workers=workers,
+                                     print_freq=print_freq,
+                                     gpu=gpu_name,
+                                     lr=learning_rate_training,
+                                     momentum=momentum_training,
+                                     weight_decay=weight_decay_training,
+                                     epochs=epochs_training,
+                                     batch_size=batch_size_training,
+                                     features=train_feat_frcnn,
+                                     knn_graph=train_knn_graph_frcnn,
+                                     labels=train_labels_frcnn,
+                                     k_at_hop=k_at_hop_training,
+                                     active_connection=active_connections_training,
+                                     save_checkpoints=save_checkpoints,
+                                     checkpoint_directory=frcnn_checkpoint
+                                     )
+
+train_state_dict_frcnn = train_main(train_args_frcnn)
+
+# validation
+val_args_frcnn = create_test_args(seed=seed,
+                                  workers=workers,
+                                  print_freq=print_freq,
+                                  gpu=gpu_name,
+                                  lr=learning_rate_testing,
+                                  momentum=momentum_testing,
+                                  weight_decay=momentum_testing,
+                                  epochs=epochs_testing,
+                                  batch_size=batch_size_testing,
+                                  features=val_feat_frcnn,
+                                  knn_graph=val_knn_graph_frcnn,
+                                  labels=val_labels_frcnn,
+                                  k_at_hop=k_at_hop_testing,
+                                  active_connection=active_connections_testing,
+                                  use_checkpoint=use_checkpoint,
+                                  checkpoint_directory=frcnn_checkpoint,
+                                  input_channels=input_channels
+                                  )
+
+_, _ = test_main(train_state_dict_frcnn, val_args_frcnn)
+
+# testing
+test_args_frcnn = create_test_args(seed=seed,
+                                   workers=workers,
+                                   print_freq=print_freq,
+                                   gpu=gpu_name,
+                                   lr=learning_rate_testing,
+                                   momentum=momentum_testing,
+                                   weight_decay=momentum_testing,
+                                   epochs=epochs_testing,
+                                   batch_size=batch_size_testing,
+                                   features=test_feat_frcnn,
+                                   knn_graph=test_knn_graph_frcnn,
+                                   labels=test_labels_frcnn,
+                                   k_at_hop=k_at_hop_testing,
+                                   active_connection=active_connections_testing,
+                                   use_checkpoint=use_checkpoint,
+                                   checkpoint_directory=frcnn_checkpoint,
+                                   input_channels=input_channels
+                                   )
+
+test_pred_frcnn, test_pred_removed_frcnn = test_main(train_state_dict_frcnn, test_args_frcnn)
+mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN'))
+
+test_pred_frcnn = create_prediction_output_file(meta_test_frcnn, test_pred_frcnn)
+test_pred_removed_frcnn = test_pred_removed_frcnn
+
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN', 'eval_input_full.npy'), test_pred_frcnn, delimiter=' ')
+np.save(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN', 'pred_removed.npy'), test_pred_removed_frcnn)
+
+del train_labels_frcnn, val_labels_frcnn, test_labels_frcnn, train_feat_frcnn, val_feat_frcnn, train_knn_graph_frcnn, \
+    val_knn_graph_frcnn, test_knn_graph_frcnn, meta_train_frcnn, meta_val_frcnn, meta_test_frcnn, \
+    test_pred_frcnn, test_pred_removed_frcnn, train_state_dict_frcnn, train_args_frcnn, val_args_frcnn, test_args_frcnn
+
+########################################################################################################################
+
+print('START TRAINING SDP DETECTOR.....')
+# create splits and adjust labeling so that it goes from 0 to num_classes in split
+train_labels_sdp = adjust_labeling(meta_train_sdp[label_column_train].to_numpy()[meta_train_sdp[iou_column_train]])
+val_labels_sdp = adjust_labeling(meta_val_sdp[label_column_valid].to_numpy()[meta_val_sdp[iou_column_valid]])
+test_labels_sdp = adjust_labeling(meta_test_sdp[label_column_test].to_numpy()[meta_test_sdp[iou_column_test]])
+
+train_feat_sdp = train_feat_sdp[meta_train_sdp[iou_column_train]]
+val_feat_sdp = val_feat_sdp[meta_val_sdp[iou_column_valid]]
+test_feat_sdp = test_feat_sdp[meta_test_sdp[iou_column_test]]
+
+# create knn graphs for each split (ensures labeling is correct)
+# first checks whether the train/ test/ valid splits are too small for creating a KNN graph.
+# if there are less instances the maximum size knn graph is created (i.e. len(split))
+if len(train_labels_sdp) > knn:
+    train_knn_graph_sdp = create_knn_graph_dataset(train_feat_sdp, knn, knn_method)
+else:
+    train_knn_graph_sdp = create_knn_graph_dataset(train_feat_sdp, len(train_labels_sdp), knn_method)
+if len(val_labels_sdp) > knn:
+    val_knn_graph_sdp = create_knn_graph_dataset(val_feat_sdp, knn, knn_method)
+else:
+    val_knn_graph_sdp = create_knn_graph_dataset(val_feat_sdp, len(val_labels_sdp), knn_method)
+if len(test_labels_sdp) > knn:
+    test_knn_graph_sdp = create_knn_graph_dataset(test_feat_sdp, knn, knn_method)
+else:
+    test_knn_graph_sdp = create_knn_graph_dataset(test_feat_sdp, len(test_labels_sdp), knn_method)
+
+# print shapes of files
+print("TRAIN SHAPES SDP")
+print(train_labels_sdp.shape)
+print(train_feat_sdp.shape)
+print(train_knn_graph_sdp.shape)
+
+print("VALID SHAPES SDP")
+print(val_labels_sdp.shape)
+print(val_feat_sdp.shape)
+print(val_knn_graph_sdp.shape)
+
+print("TEST SHAPES SDP")
+print(test_labels_sdp.shape)
+print(test_feat_sdp.shape)
+print(test_knn_graph_sdp.shape)
+
+# training
+train_args_sdp = create_train_args(input_channels=input_channels,
+                                   seed=seed,
+                                   workers=workers,
+                                   print_freq=print_freq,
+                                   gpu=gpu_name,
+                                   lr=learning_rate_training,
+                                   momentum=momentum_training,
+                                   weight_decay=weight_decay_training,
+                                   epochs=epochs_training,
+                                   batch_size=batch_size_training,
+                                   features=train_feat_sdp,
+                                   knn_graph=train_knn_graph_sdp,
+                                   labels=train_labels_sdp,
+                                   k_at_hop=k_at_hop_training,
+                                   active_connection=active_connections_training,
+                                   save_checkpoints=save_checkpoints,
+                                   checkpoint_directory=sdp_checkpoint
+                                   )
+
+train_state_dict_sdp = train_main(train_args_sdp)
+
+# validation
+val_args_sdp = create_test_args(seed=seed,
+                                workers=workers,
+                                print_freq=print_freq,
+                                gpu=gpu_name,
+                                lr=learning_rate_testing,
+                                momentum=momentum_testing,
+                                weight_decay=momentum_testing,
+                                epochs=epochs_testing,
+                                batch_size=batch_size_testing,
+                                features=val_feat_sdp,
+                                knn_graph=val_knn_graph_sdp,
+                                labels=val_labels_sdp,
+                                k_at_hop=k_at_hop_testing,
+                                active_connection=active_connections_testing,
+                                use_checkpoint=use_checkpoint,
+                                checkpoint_directory=sdp_checkpoint,
+                                input_channels=input_channels
+                                )
+
+_, _ = test_main(train_state_dict_sdp, val_args_sdp)
+
+# testing
+test_args_sdp = create_test_args(seed=seed,
+                                 workers=workers,
+                                 print_freq=print_freq,
+                                 gpu=gpu_name,
+                                 lr=learning_rate_testing,
+                                 momentum=momentum_testing,
+                                 weight_decay=momentum_testing,
+                                 epochs=epochs_testing,
+                                 batch_size=batch_size_testing,
+                                 features=test_feat_sdp,
+                                 knn_graph=test_knn_graph_sdp,
+                                 labels=test_labels_sdp,
+                                 k_at_hop=k_at_hop_testing,
+                                 active_connection=active_connections_testing,
+                                 use_checkpoint=use_checkpoint,
+                                 checkpoint_directory=sdp_checkpoint,
+                                 input_channels=input_channels
+                                 )
+
+test_pred_sdp, test_pred_removed_sdp = test_main(train_state_dict_sdp, test_args_sdp)
+mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-SDP'))
+
+test_pred_sdp = create_prediction_output_file(meta_test_sdp, test_pred_sdp)
+test_pred_removed_sdp = test_pred_removed_sdp
+
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-SDP', 'eval_input_full.txt'), test_pred_sdp, delimiter=' ')
+np.save(os.path.join('../logs', date, timestamp, test_sequence + '-SDP', 'pred_removed.npy'), test_pred_removed_sdp)

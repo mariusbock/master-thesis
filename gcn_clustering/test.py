@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from torch.backends import cudnn
 from torch.utils.data import DataLoader
 
+from gcn_clustering.utils.logging import Logger
 from . import model
 from .feeder.feeder import Feeder
 from .utils import to_numpy
@@ -48,15 +49,18 @@ def single_remove(Y, pred):
     # use single idcs array to create array of all remaining idcs (has idcs of all nodes not in single_idcs
     remain_idcs = [i for i in range(len(pred)) if not single_idcs[i]]
     remain_idcs = np.asarray(remain_idcs)
-    # return Y and pred only of indexes that are in remain_idcs
+    # return labels and pred only of indexes that are in remain_idcs
     return Y[remain_idcs], pred[remain_idcs]
 
 
-def test_main(args):
+def test_main(state_dict, args):
     # same settings as training
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     cudnn.benchmark = True
+
+    if args.use_checkpoint:
+        sys.stdout = Logger(osp.join(args.logs_dir, 'log.txt'))
 
     # initiate feeder but with training, false meaning that unique_nodes_list are also returned per instance
     valset = Feeder(args.features,
@@ -71,10 +75,15 @@ def test_main(args):
         valset, batch_size=args.batch_size,
         num_workers=args.workers, shuffle=False, pin_memory=True)
 
-    # load checkpoint and parse its settings to gcn -> so that it is the same
-    ckpt = load_checkpoint(args.checkpoint)
-    net = model.gcn()
-    net.load_state_dict(ckpt['state_dict'])
+    # changed this to save space on server (state_dict needs to be passed to test_main method)
+    if args.use_checkpoint:
+        ckpt = load_checkpoint(args.checkpoint)
+        net = model.gcn(args)
+        net.load_state_dict(ckpt['state_dict'])
+        net = net.cuda()
+    else:
+        net = model.gcn(args)
+        net.load_state_dict(state_dict)
     # .cuda() copies CPU data to GPU. You probably don't want to keep the data in GPU all the time.
     # That means, you only store data in GPU when it's really necessary.
     net = net.to(args.gpu)
@@ -93,8 +102,8 @@ def test_main(args):
     edges, scores = validate(valloader, net, criterion, args)
 
     # save edges and scores as files
-    np.save('edges', edges)
-    np.save('scores', scores)
+    # np.save('edges', edges)
+    # np.save('scores', scores)
     # edges=np.load('edges.npy')
     # scores = np.load('scores.npy')
 
@@ -112,13 +121,15 @@ def test_main(args):
     nmi = normalized_mutual_info_score(final_pred, labels)
     print(('{:.4f}    ' * 4).format(p, r, f, nmi))
     # remove single clusters
-    labels, final_pred = single_remove(labels, final_pred)
+    labels, final_pred_removed = single_remove(labels, final_pred)
     print('------------------------------------')
     print('After removing singleton culsters, number of nodes: ', len(labels))
     print('Precision   Recall   F-Sore   NMI')
-    p, r, f = bcubed(final_pred, labels)
-    nmi = normalized_mutual_info_score(final_pred, labels)
+    p, r, f = bcubed(labels, final_pred_removed)
+    nmi = normalized_mutual_info_score(final_pred_removed, labels)
     print(('{:.4f}    ' * 4).format(p, r, f, nmi))
+
+    return final_pred, final_pred_removed
 
 
 def clusters2labels(clusters, n_nodes):
@@ -254,6 +265,6 @@ if __name__ == '__main__':
                         default=osp.join(working_dir, '../data/facedata/1845.labels.npy'))
 
     # Test args
-    parser.add_argument('--checkpoint', type=str, metavar='PATH', default='./logs/epoch_4.ckpt')
+    parser.add_argument('--checkpoint', type=str, metavar='PATH', default='./logs/trained_appearance_sdp.ckpt')
     args = parser.parse_args()
     test_main(args)

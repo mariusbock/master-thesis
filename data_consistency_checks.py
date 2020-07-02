@@ -211,11 +211,14 @@ def check_metadata_files(det_file, gt_file, metadata_paths):
 
 if __name__ == '__main__':
     # Detection parameters
-    sequence = "MOT/MOT17/MOT17-02"
-    detector = "dpm"
+    data_directory = 'data/MOT/MOT17'
+    sequence = "MOT17-02"
+    detector = "MOT17-02-DPM"
 
-    detection_file = np.loadtxt(os.path.join("data", sequence, detector, "det.txt"), delimiter=",")
-    metadata_files = get_all_metadata_files(os.path.join("data", sequence, detector))
-    ground_truth_file = np.loadtxt(os.path.join("data", sequence, "gt.txt"), delimiter=",")
+    for detector in os.listdir(os.path.join(data_directory)):
+        if sequence in detector:
+            detection_file = np.loadtxt(os.path.join(data_directory, detector, "det/det.txt"), delimiter=",")
+            metadata_files = get_all_metadata_files(os.path.join(data_directory, detector))
+            ground_truth_file = np.loadtxt(os.path.join(data_directory, detector, "gt/gt.txt"), delimiter=",")
 
-    check_metadata_files(detection_file, ground_truth_file, metadata_files)
+            check_metadata_files(detection_file, ground_truth_file, metadata_files)

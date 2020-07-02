@@ -43,8 +43,6 @@ def train_main(args):
     every time a new size appears, possibly leading to worse runtime performances
     """
     cudnn.benchmark = True
-    # saves logs to a file (standard output redirected)
-    sys.stdout = Logger(osp.join(args.logs_dir, 'log.txt'))
 
     # Call feeder that creates train data set using arguments; if instance is requested from trainset, it returns the
     # the features, adjacency matrix, center_idx, one_hop_idcs and edge_labels of the IPS; features contains h-hop
@@ -61,7 +59,7 @@ def train_main(args):
         num_workers=args.workers, shuffle=True, pin_memory=True)
     # if statement introduced to make CPU compatible; creates GCN model
 
-    net = model.gcn().to(args.gpu)
+    net = model.gcn(args).to(args.gpu)
     # declare optimizer (stochastic gradient descent) with learning rate, momentum and weight_decay (l2 penalty)
     opt = torch.optim.SGD(net.parameters(), args.lr,
                           momentum=args.momentum,
@@ -70,10 +68,11 @@ def train_main(args):
     criterion = nn.CrossEntropyLoss().to(args.gpu)
 
     # save state of network after each epoch as ckpt file (see utils.serialization)
-    save_checkpoint({
-        'state_dict': net.state_dict(),
-        'epoch': 0, }, False,
-        fpath=osp.join(args.logs_dir, 'epoch_{}.ckpt'.format(0)))
+    if args.save_checkpoints:
+        save_checkpoint({
+            'state_dict': net.state_dict(),
+            'epoch': 0, }, False,
+            fpath=osp.join(args.logs_dir, 'epoch_{}.ckpt'.format(0)))
 
     # commence training
     for epoch in range(args.epochs):
@@ -85,12 +84,15 @@ def train_main(args):
         # train model using parameters trainloader, network, criterion, optimizer and epoch number
         train(trainloader, net, criterion, opt, epoch, args)
         # after each epoch save state into file (is_best is set to false here)
-        save_checkpoint({
-            'state_dict': net.state_dict(),
-            'epoch': epoch + 1, }, False,
-            fpath=osp.join(args.logs_dir, 'epoch_{}.ckpt'.format(epoch + 1)))
+        if args.save_checkpoints and epoch + 1 == 4:
+            save_checkpoint({
+                'state_dict': net.state_dict(),
+                'epoch': epoch + 1, }, False,
+                fpath=osp.join(args.logs_dir, 'epoch_{}.ckpt'.format(epoch + 1)))
     # print final elapsed time
     print("Final elapsed time: " + str(time.time() - start_time))
+
+    return net.state_dict()
 
 
 def train(loader, net, crit, opt, epoch, args):
@@ -189,7 +191,7 @@ def accuracy(pred, label):
 
 
 if __name__ == '__main__':
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    timestamp = time.strftime("%labels%m%d-%H%M%S")
     parser = argparse.ArgumentParser()
     # misc
     working_dir = osp.dirname(osp.abspath(__file__))
@@ -198,6 +200,7 @@ if __name__ == '__main__':
     parser.add_argument('--workers', default=24, type=int)
     parser.add_argument('--print_freq', default=1, type=int)
     parser.add_argument('--gpu', default='cuda:0', type=str)
+    parser.add_argument('--save_checkpoints', default=False, type=bool)
 
     # Optimization args
     parser.add_argument('--lr', type=float, default=1e-2)
@@ -208,11 +211,11 @@ if __name__ == '__main__':
     # Training args
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--feat_path', type=str, metavar='PATH',
-                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/dpm/features.pooled.npy'))
+                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/MOT17-02-DPM/features.pooled.npy'))
     parser.add_argument('--knn_graph_path', type=str, metavar='PATH',
-                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/dpm/knn.graph.pooled.brute.npy'))
+                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/MOT17-02-DPM/knn.graph.pooled.brute.npy'))
     parser.add_argument('--label_path', type=str, metavar='PATH',
-                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/dpm/labels.zero.0.5.0.3.npy'))
+                        default=osp.join(working_dir, '../data/MOT/MOT17/MOT17-02/MOT17-02-DPM/labels.zero.0.5.0.3.npy'))
     parser.add_argument('--k-at-hop', type=int, nargs='+', default=[200, 10])
     parser.add_argument('--active_connection', type=int, default=10)
 

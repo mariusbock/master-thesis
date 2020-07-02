@@ -50,7 +50,7 @@ class GraphConv(nn.Module):
         self.bias = nn.Parameter(torch.FloatTensor(out_dim))
         """
         Fills the input Tensor with values according to the method described in Understanding the difficulty of 
-        training deep feedforward neural networks - Glorot, X. & Bengio, Y. (2010), using a uniform distribution
+        training deep feedforward neural networks - Glorot, features. & Bengio, labels. (2010), using a uniform distribution
         REPLACE HERE IF OTHER INPUT WEIGHTS WANTED!
         """
         init.xavier_uniform_(self.weight)
@@ -80,10 +80,11 @@ class GraphConv(nn.Module):
 
 
 class gcn(nn.Module):
-    def __init__(self):
+    def __init__(self, args):
         super(gcn, self).__init__()
         # declare all elements of GCN
-        self.convReduce = nn.Conv1d(in_channels=2048, out_channels=512, kernel_size=1)
+        self.convAdjustInput = nn.Conv1d(in_channels=args.input_channels, out_channels=512, kernel_size=1)
+        torch.nn.init.xavier_uniform_(self.convAdjustInput.weight)
         self.bn0 = nn.BatchNorm1d(512, affine=False)
         self.conv1 = GraphConv(512, 512, MeanAggregator)
         self.conv2 = GraphConv(512, 512, MeanAggregator)
@@ -100,11 +101,10 @@ class gcn(nn.Module):
         # xnorm = x.norm(2,2,keepdim=True) + 1e-8
         # xnorm = xnorm.expand_as(x)
         # x = x.div(xnorm)
-        # reshape tensor and apply reduction convolution
+        # reshape tensor and apply reduction/ upsample convolution (depending on type
         x = x.transpose(1, 2)
-        x = self.convReduce(x)
+        x = self.convAdjustInput(x)
         x = x.transpose(1, 2)
-
         B, N, D = x.shape
         # reshape tensor for batch normalization
         x = x.reshape(-1, D)

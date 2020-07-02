@@ -25,13 +25,13 @@ class Feeder(data.Dataset):
     Generate a sub-graph from the feature graph centered at some node, 
     and now the sub-graph has a fixed depth, i.e. 2
     '''
-    def __init__(self, feat_path, knn_graph_path, label_path, seed=1, 
+    def __init__(self, features, knn_graph, labels, seed=1,
                  k_at_hop=[200,5], active_connection=5, train=True):
         np.random.seed(seed)
         random.seed(seed)
-        self.features = np.load(feat_path)
-        self.knn_graph = np.load(knn_graph_path)[:,:k_at_hop[0]+1]
-        self.labels = np.load(label_path)
+        self.features = features
+        self.knn_graph = knn_graph[:,:k_at_hop[0]+1]
+        self.labels = labels
         self.num_samples = len(self.features)
         self.depth = len(k_at_hop)
         self.k_at_hop = k_at_hop
