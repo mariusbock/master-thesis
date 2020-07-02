@@ -65,6 +65,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
     # filter arrays to obtain all detections that were assigned a class, background or both
     class_array = np.zeros(num_lines_det, dtype=bool)
     excluded_array = np.ones(num_lines_det, dtype=bool)
+    included_array = np.zeros(num_lines_det, dtype=bool)
     background_array = np.zeros(num_lines_det, dtype=bool)
 
     # array that will contain bounding box coordinates of the matched ground truth box
@@ -101,6 +102,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
                 if curr_iou > iou_range[0]:
                     labels[int(det_line[0])] = gt_line[1]
                     class_array[int(det_line[0])] = True
+                    included_array[int(det_line[0])] = True
                     background_array[int(det_line[0])] = False
                     excluded_array[int(det_line[0])] = False
                 # if the iou is within the iou_range exclude the detection by updating the filter arrays
@@ -108,12 +110,14 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
                     labels[int(det_line[0])] = gt_line[1]
                     class_array[int(det_line[0])] = False
                     background_array[int(det_line[0])] = False
+                    included_array[int(det_line[0])] = False
                     excluded_array[int(det_line[0])] = True
                 # if the iou is smaller than the lower bound of the iou_range it is background
                 # also update filter arrays
                 elif iou_range[1] > curr_iou:
                     class_array[int(det_line[0])] = False
                     background_array[int(det_line[0])] = True
+                    included_array[int(det_line[0])] = True
                     excluded_array[int(det_line[0])] = False
                     # depending on which method is to be used for background the detection is either assigned
                     # a zero or a new class (by increasing no_instances)
@@ -137,12 +141,13 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
     metadata_file['labels_' + str(iou_range[0]) + "_" + str(iou_range[1]) + "_" + background_handling] = labels
     metadata_file['is_class'] = class_array
     metadata_file['is_background'] = background_array
+    metadata_file['is_included'] = included_array
     metadata_file['is_excluded'] = excluded_array
 
-    return labels, metadata_file
+    return metadata_file
 
 
-def create_train_valid_test(metadata_file, split_ratio, split_by):
+def create_train_valid_test(metadata_file, split_ratio):
     """
     Function that creates (approx.) evenly distributed train, valid and test datasets for a given labels_file
     It does so by handling classes and background separately to ensure that each dataset is assigned equal amounts
@@ -170,39 +175,36 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     # Currently only split by ID is supported. Idea is to split classes and background independently
     # This ensures a correct distribution. The code splits the classes and background attribute above into train, valid
     # and test via GroupShuffleSplit, ShuffleSplit and indexing.
-    if split_by == "id":
-        # create idx for classes
-        label_col = [col for col in metadata_file.columns if 'labels_' in col]
-        train_idx, valid_test_idx = next(GroupShuffleSplit(train_size=split_ratio[0], n_splits=1, random_state=7)
-                                         .split(classes, groups=classes[label_col[0]]))
-        valid_idx, test_idx = next(GroupShuffleSplit(test_size=split_ratio[1] / (split_ratio[1] + split_ratio[2]),
-                                                     n_splits=1, random_state=7)
-                                   .split(classes.iloc[valid_test_idx, :],
-                                          groups=classes.iloc[valid_test_idx, :][label_col[0]]))
-        # create idx for background
-        try:
-            train_bg_idx, valid_test_bg_idx = next(
-                ShuffleSplit(train_size=split_ratio[0], n_splits=1, random_state=7).split(background))
-            valid_bg_idx, test_bg_idx = next(
-                ShuffleSplit(test_size=split_ratio[1] / (split_ratio[1] + split_ratio[2]), n_splits=1,
-                             random_state=7).split(background.iloc[valid_test_bg_idx, :]))
+    # create idx for classes
+    label_col = [col for col in metadata_file.columns if 'labels_' in col]
+    train_idx, valid_test_idx = next(GroupShuffleSplit(train_size=split_ratio[0], n_splits=1, random_state=7)
+                                     .split(classes, groups=classes[label_col[0]]))
 
-            # split background attribute into train, valid and test using indeces obtained above
-            train_bg = background.iloc[train_bg_idx, :]
-            train_bg['is_train'] = True
-            valid_bg = background.iloc[valid_test_bg_idx, :].iloc[valid_bg_idx, :]
-            valid_bg['is_valid'] = True
-            test_bg = background.iloc[valid_test_bg_idx, :].iloc[test_bg_idx, :]
-            test_bg['is_test'] = True
-        # this exception is needed if the background detections are very small (which will cause the ShuffleSplit to
-        # not work. If this is the case, the background is just split equally and not using ratios.
-        except ValueError:
-            train_bg, valid_bg, test_bg = np.array_split(background, 3)
-            train_bg['is_train'] = True
-            valid_bg['is_valid'] = True
-            test_bg['is_test'] = True
-    elif split_by == "frame":
-        print("CURRENTLY NOT SUPPORTED")
+    valid_idx, test_idx = next(GroupShuffleSplit(test_size=split_ratio[1] / (split_ratio[1] + split_ratio[2]),
+                                                 n_splits=1, random_state=7)
+                               .split(classes.iloc[valid_test_idx, :],
+                                      groups=classes.iloc[valid_test_idx, :][label_col[0]]))
+    # create idx for background
+    try:
+        train_bg_idx, valid_test_bg_idx = next(
+            ShuffleSplit(train_size=split_ratio[0], n_splits=1, random_state=7).split(background))
+        valid_bg_idx, test_bg_idx = next(
+            ShuffleSplit(test_size=split_ratio[1] / (split_ratio[1] + split_ratio[2]), n_splits=1,
+                         random_state=7).split(background.iloc[valid_test_bg_idx, :]))
+        # split background attribute into train, valid and test using indeces obtained above
+        train_bg = background.iloc[train_bg_idx, :]
+        train_bg['is_train'] = True
+        valid_bg = background.iloc[valid_test_bg_idx, :].iloc[valid_bg_idx, :]
+        valid_bg['is_valid'] = True
+        test_bg = background.iloc[valid_test_bg_idx, :].iloc[test_bg_idx, :]
+        test_bg['is_test'] = True
+    # this exception is needed if the background detections are very small (which will cause the ShuffleSplit to
+    # not work. If this is the case, the background is just split equally and not using ratios.
+    except ValueError:
+        train_bg, valid_bg, test_bg = np.array_split(background, 3)
+        train_bg['is_train'] = True
+        valid_bg['is_valid'] = True
+        test_bg['is_test'] = True
 
     # split classes attribute into train, valid and test using indeces obtained above
     train_classes = classes.iloc[train_idx, :]
@@ -211,7 +213,6 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     valid_classes['is_valid'] = True
     test_classes = classes.iloc[valid_test_idx, :].iloc[test_idx, :]
     test_classes['is_test'] = True
-
     # reconstruct metadata file
     metadata_file = pd.concat(
         [train_classes, valid_classes, test_classes, train_bg, valid_bg, test_bg, removed]).sort_values('idx')
@@ -219,7 +220,67 @@ def create_train_valid_test(metadata_file, split_ratio, split_by):
     return metadata_file
 
 
-def create_feature_dataset(detection_file, image_folder, batch_size, gpu_name, max_pool):
+def create_train_valid(metadata_file, split_ratio):
+    """
+    Function that creates (approx.) evenly distributed train, valid and test datasets for a given labels_file
+    It does so by handling classes and background separately to ensure that each dataset is assigned equal amounts
+    of background observations. The resulting datasets are translated into filter arrays, which are appended to the
+    metadata_file.
+    Currently only the splitting by ID is supported
+    """
+    # TODO: add choice to be able to split by frame (add parameter split by)
+    # create filter array columns in metadata_file
+    metadata_file['is_train'] = False
+    metadata_file['is_valid'] = False
+
+    # split metadata file into records that are assigned a class, background or nothing
+    background = metadata_file[metadata_file['is_background']]
+    classes = metadata_file[metadata_file['is_class']]
+    removed = metadata_file[metadata_file['is_excluded']]
+
+    print("TOTAL BACKGROUND DETECTIONS:")
+    print(background.shape)
+    print("TOTAL CLASSES DETECTIONS:")
+    print(classes.shape)
+    print("REMOVED DETECTIONS:")
+    print(removed.shape)
+
+    # Currently only split by ID is supported. Idea is to split classes and background independently
+    # This ensures a correct distribution. The code splits the classes and background attribute above into train, valid
+    # and test via GroupShuffleSplit, ShuffleSplit and indexing.
+    # create idx for classes
+    label_col = [col for col in metadata_file.columns if 'labels_' in col]
+    train_idx, valid_idx = next(GroupShuffleSplit(train_size=split_ratio[0], n_splits=1, random_state=7)
+                                .split(classes, groups=classes[label_col[0]]))
+    # create idx for background
+    try:
+        train_bg_idx, valid_bg_idx = next(
+            ShuffleSplit(train_size=split_ratio[0], n_splits=1, random_state=7).split(background))
+        # split background attribute into train, valid and test using indeces obtained above
+        train_bg = background.iloc[train_bg_idx, :]
+        train_bg['is_train'] = True
+        valid_bg = background.iloc[valid_bg_idx, :]
+        valid_bg['is_valid'] = True
+    # this exception is needed if the background detections are very small (which will cause the ShuffleSplit to
+    # not work. If this is the case, the background is just split equally and not using ratios.
+    except ValueError:
+        train_bg, valid_bg = np.array_split(background, 2)
+        train_bg['is_train'] = True
+        valid_bg['is_valid'] = True
+
+    # split classes attribute into train, valid and test using indeces obtained above
+    train_classes = classes.iloc[train_idx, :]
+    train_classes['is_train'] = True
+    valid_classes = classes.iloc[valid_idx, :]
+    valid_classes['is_valid'] = True
+
+    # reconstruct metadata file
+    metadata_file = pd.concat([train_classes, valid_classes, train_bg, valid_bg, removed]).sort_values('idx')
+
+    return metadata_file
+
+
+def create_appearance_feature_dataset(detection_file, image_folder, batch_size, gpu_name, max_pool):
     """
     Function that creates for each detection a feature array using ResNet50 and RoI-Align.
     Each Image is feed into the resnet, which is modified to return the feature map before the first fc-layer as output.
@@ -227,7 +288,7 @@ def create_feature_dataset(detection_file, image_folder, batch_size, gpu_name, m
     Using torchvision's RoI-Align each detected bounding box is translated into a 2048x4x4 numpy array.
     Said array is flattened and added to the output array in its corresponding place (determined by id of detection)
     """
-    print("Creating Feature Dataset...")
+    print("Creating Appearance Feature Dataset...")
     # apply preprocessing needed for resnet (will be further investigated if normalization is needed or should
     # be changed to be according to dataset used for detection)
     preprocess = transforms.Compose([
@@ -287,6 +348,18 @@ def create_feature_dataset(detection_file, image_folder, batch_size, gpu_name, m
     return output_features
 
 
+def create_spatial_feature_dataset(detection_file):
+    print("Creating Spatial Feature Dataset...")
+    output_features = np.empty((len(detection_file), 5))
+    output_features[:, 0] = detection_file[:, 3]
+    output_features[:, 1] = detection_file[:, 4]
+    output_features[:, 2] = detection_file[:, 5]
+    output_features[:, 3] = detection_file[:, 6]
+    output_features[:, 4] = detection_file[:, 1]
+
+    return output_features
+
+
 def create_knn_graph_dataset(features_file, neighbors, method):
     """
     Function that creates a knn-graph file according to the input format of the GCN paper.
@@ -310,7 +383,7 @@ def create_knn_graph_dataset(features_file, neighbors, method):
     return output_knn_graph
 
 
-def filter_dataset_for_iou(metadata_file, iou_train, iou_valid, iou_test, lower_bound):
+def filter_train_valid_test_dataset_for_iou(metadata_file, iou_train, iou_valid, iou_test, lower_bound):
     """
     Function used to filter a metadata_file to create different versions of the train, valid and test filter array.
     For each value of iou_train, iou_valid and iou_test it creates a new column that contains a filter array, that
@@ -347,89 +420,209 @@ def filter_dataset_for_iou(metadata_file, iou_train, iou_valid, iou_test, lower_
     return metadata_file
 
 
-def adjust_labeling(label_file):
+def filter_train_valid_dataset_for_iou(metadata_file, iou_train, iou_valid, lower_bound):
     """
-    Function that adjust the labeling of a labels file. Needed to avoid indexing errors during training of the GCN.
-    Substates the original labeling with a continuous one from 0 to num_labels in labels file. Does so by ordering the
-    labels in increasing order and creating a dictionary with its new labels.
+    Function used to filter a metadata_file to create different versions of the train and valid filter array.
+    For each value of iou_train and iou_valid it creates a new column that contains a filter array, that
+    will return you a dataset that assumes a different iou upper bound threshold.
     """
-    # obtain list of all labels occurring in label file
-    unique_labels = np.unique(label_file)
-    # create an array from 0 to num_unique_labels (new labels)
-    new_labels = np.arange(len(unique_labels))
-    # create a dict from the two arrays and use it to substitute labels
-    label_dict = dict(zip(unique_labels, new_labels))
-    new_labels = np.array([label_dict[x] for x in label_file])
-    return new_labels
+    for tr_iou in iou_train:
+        # create a filter array column for the new train dataset with tr_iou as new upper bound
+        metadata_file['fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = False
+        for va_iou in iou_valid:
+            # create a filter array column for the new valid dataset with va_iou as new upper bound
+            metadata_file['fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = False
+            for i, det in metadata_file.iterrows():
+                # for each detection, check whether it was train, valid or test
+                # if so then check for new upper and original lower bound to obtain a new filter array
+                if det['is_train']:
+                    if det['iou'] > tr_iou:
+                        metadata_file.at[i, 'fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = True
+                    elif det['iou'] < lower_bound:
+                        metadata_file.at[i, 'fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = True
+                elif det['is_valid']:
+                    if det['iou'] > va_iou:
+                        metadata_file.at[i, 'fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = True
+                    elif det['iou'] < lower_bound:
+                        metadata_file.at[i, 'fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = True
+
+    return metadata_file
 
 
-if __name__ == '__main__':
-    # Runtime parameters
-    # Labels (Note that first value of iou_range needs to be smallest of train, valid and test iou)
-    iou_range_labeling = [0.5, 0.3]
-    bg_handling = "zero"
-    train_iou = [0.7]
-    valid_iou = [0.7, 0.5]
-    test_iou = [0.5]
-    # Features
-    # Currently only works with batch_size = 1
-    batch_size_features = 1
-    gpu_name_features = "cuda:0"
-    pool = True
-    # KNN
-    method_knn = "brute"
-    no_neighbors = 200
-
-    # Detection parameters
-    sequence = "MOT/MOT17/MOT17-04"
-    detector = "sdp"
-
-    # Face Datasets for comparison
-    # label_dataset_faces = np.load("data/facedata/512.labels.npy")
-    # feature_dataset_faces = np.load("data/facedata/512.fea.npy")
-    # knn_graph_faces = np.load("data/facedata/knn.graph.512.bf.npy")
-
+def create_train_valid_files(data_directory, sequence, det_path, gt_path, img_path, iou_range_labeling, bg_handling,
+                             split_ratio, train_iou, valid_iou, batch_size_features, gpu_name_features,
+                             max_pool_features):
+    """
+    Function that creates from a sequence a train-valid split according to split criteria and creates feature dataset
+    for said sequence.
+    Parameters:
+        Parameters:
+        data_directory -- directory where sequence folder is located in
+        sequence -- name of sequence
+        det_path -- path to detection file within sequence folder
+        gt_path -- path to ground truth file within sequence folder
+        img_path -- path to image folder within sequence folder
+        iou_range_labeling -- iou upper and lower bound for label creation (note upper bound needs to be lowest value of
+                              train_iou and valid_iou
+        bg_handling -- background handling method during label creation (currently only "zero" supported)
+        split_ratio -- train/ valid split ratio
+        train_iou -- employed upper bound iou's in train set
+        valid_iou -- employed upper bound iou's in valid set
+        batch_size_features -- batch_size employed during feature creation
+        gpu_name_features -- gpu used during feature creation
+        max_pool_features -- boolean whether to max_pool or not after bbox extraction
+    """
+    print('Creating Train/ Valid Files for ' + sequence + '...')
     start = time.time()
+    for detector in os.listdir(os.path.join(data_directory)):
+        if sequence in detector:
+            print('Processing Detector ' + detector + '...')
+            # load detection and ground truth file
+            det_file_mot = np.loadtxt(os.path.join(data_directory, detector, det_path), delimiter=",")
+            gt_file_mot = np.loadtxt(os.path.join(data_directory, detector, gt_path), delimiter=",")
 
-    # load detection and ground truth file
-    det_file_mot = np.loadtxt(os.path.join("data", sequence, detector, "det.txt"), delimiter=",")
-    gt_file_mot = np.loadtxt(os.path.join("data", sequence, "gt.txt"), delimiter=",")
+            # Folder variables
+            output_folder = os.path.join(data_directory, detector)
+            image_folder_path = os.path.join(data_directory, detector, img_path)
 
-    # Folder variables
-    output_folder = os.path.join("data", sequence, detector)
-    image_folder_path = os.path.join("data", sequence, "images")
+            # create modified detection file and initialise metadata file
+            mod_det_file_mot = create_modified_detection_file(detection_file=det_file_mot)
 
-    # create modified detection file and initialise metadata file
-    mod_det_file_mot = create_modified_detection_file(detection_file=det_file_mot)
-    meta_data_mot = create_meta_dataset(detection_file=mod_det_file_mot)
+            meta_data_mot = create_meta_dataset(detection_file=mod_det_file_mot)
 
-    # create label dataset and metadata file
-    label_dataset_mot, meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
-                                                            ground_truth_file=gt_file_mot,
-                                                            metadata_file=meta_data_mot,
-                                                            iou_range=iou_range_labeling,
-                                                            background_handling=bg_handling
-                                                            )
+            # create label dataset and metadata file
+            meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
+                                                 ground_truth_file=gt_file_mot,
+                                                 metadata_file=meta_data_mot,
+                                                 iou_range=iou_range_labeling,
+                                                 background_handling=bg_handling
+                                                 )
 
-    # create train valid and test split and extend metadata file with filter arrays
-    meta_data_mot = create_train_valid_test(metadata_file=meta_data_mot,
-                                            split_ratio=[0.8, 0.1, 0.1],
-                                            split_by="id"
-                                            )
+            # create train valid and test split and extend metadata file with filter arrays
+            meta_data_mot = create_train_valid(metadata_file=meta_data_mot,
+                                               split_ratio=split_ratio,
+                                               )
 
-    # use filter arrays to create different filter arrays that follow different iou thresholds
-    meta_data_mot = filter_dataset_for_iou(metadata_file=meta_data_mot,
-                                           iou_train=train_iou,
-                                           iou_valid=valid_iou,
-                                           iou_test=test_iou,
-                                           lower_bound=iou_range_labeling[1]
-                                           )
+            # use filter arrays to create different filter arrays that follow different iou thresholds
+            meta_data_mot = filter_train_valid_dataset_for_iou(metadata_file=meta_data_mot,
+                                                               iou_train=train_iou,
+                                                               iou_valid=valid_iou,
+                                                               lower_bound=iou_range_labeling[1]
+                                                               )
 
-    # save metadata file with current timestamp
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_metadata.csv"), index=False, float_format='%g')
+            spatial_features = create_spatial_feature_dataset(mod_det_file_mot)
+            appearance_features = create_appearance_feature_dataset(mod_det_file_mot, image_folder_path,
+                                                                    batch_size_features,
+                                                                    gpu_name_features, max_pool_features)
+
+            np.save(os.path.join(output_folder, "feat_spa.npy"), spatial_features)
+            if max_pool_features:
+                np.save(os.path.join(output_folder, "feat_app_pool.npy"), appearance_features)
+            else:
+                np.save(os.path.join(output_folder, "feat_app.npy"), appearance_features)
+
+            # save metadata file with current timestamp
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_train_valid" + "_metadata.csv"), index=False,
+                                 float_format='%g')
 
     end = time.time()
     hours, rem = divmod(end - start, 3600)
     minutes, seconds = divmod(rem, 60)
     print("Final time elapsed: {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
+
+
+def create_test_files(data_directory, sequence, det_path, gt_path, img_path, iou_range_labeling, bg_handling,
+                      batch_size_features, gpu_name_features, max_pool_features):
+    """
+    Function that creates from a sequence a test set.
+    Parameters:
+        data_directory -- directory where sequence folder is located in
+        sequence -- name of sequence
+        det_path -- path to detection file within sequence folder
+        gt_path -- path to ground truth file within sequence folder
+        img_path -- path to image folder within sequence folder
+        iou_range_labeling -- iou upper and lower bound for label creation (note upper bound needs to be lowest value of
+                              train_iou and valid_iou
+        bg_handling -- background handling method during label creation (currently only "zero" supported)
+        batch_size_features -- batch_size employed during feature creation
+        gpu_name_features -- gpu used during feature creation
+        max_pool_features -- boolean whether to max_pool or not after bbox extraction
+    """
+    print('Creating Test Files for ' + sequence + '...')
+    start = time.time()
+    for detector in os.listdir(os.path.join(data_directory)):
+        if sequence in detector:
+            print('Processing Detector ' + detector + '...')
+            # load detection and ground truth file
+            det_file_mot = np.loadtxt(os.path.join(data_directory, detector, det_path),
+                                      delimiter=",")
+            gt_file_mot = np.loadtxt(os.path.join(data_directory, gt_path), delimiter=",")
+
+            # Folder variables
+            output_folder = os.path.join(data_directory, detector)
+            image_folder_path = os.path.join(data_directory, detector, img_path)
+
+            # create modified detection file and initialise metadata file
+            mod_det_file_mot = create_modified_detection_file(detection_file=det_file_mot)
+
+            meta_data_mot = create_meta_dataset(detection_file=mod_det_file_mot)
+
+            # create label dataset and metadata file
+            label_dataset_mot, meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
+                                                                    ground_truth_file=gt_file_mot,
+                                                                    metadata_file=meta_data_mot,
+                                                                    iou_range=iou_range_labeling,
+                                                                    background_handling=bg_handling
+                                                                    )
+
+            # save metadata file with current timestamp
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_test" + "_metadata.csv"), index=False,
+                                 float_format='%g')
+
+            # create spatial and feature dataset
+            spatial_features = create_spatial_feature_dataset(mod_det_file_mot)
+            appearance_features = create_appearance_feature_dataset(mod_det_file_mot, image_folder_path,
+                                                                    batch_size_features,
+                                                                    gpu_name_features, max_pool_features)
+            # save feature dataset
+            np.save(os.path.join(output_folder, "feat_spa.npy"), spatial_features)
+            if max_pool_features:
+                np.save(os.path.join(output_folder, "feat_app_pool.npy"), appearance_features)
+            else:
+                np.save(os.path.join(output_folder, "feat_app.npy"), appearance_features)
+
+    end = time.time()
+    hours, rem = divmod(end - start, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print("Final time elapsed: {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
+
+
+if __name__ == '__main__':
+    create_train_valid_files(data_directory='data/MOT/MOT17',
+                             sequence='MOT17-04',
+                             det_path='det/det.txt',
+                             gt_path='gt/gt.txt',
+                             img_path='img',
+                             iou_range_labeling=[0.5, 0.3],
+                             bg_handling='zero',
+                             split_ratio=[0.8, 0.2],
+                             train_iou=[0.7],
+                             valid_iou=[0.5, 0.7],
+                             batch_size_features=1,
+                             gpu_name_features='cuda:0',
+                             max_pool_features=True
+                             )
+
+    create_test_files(data_directory='data/MOT/MOT17',
+                      sequence='MOT17-02',
+                      det_path='det/det.txt',
+                      gt_path='gt/gt.txt',
+                      img_path='img',
+                      iou_range_labeling=[0.5, 0.3],
+                      bg_handling='zero',
+                      batch_size_features=1,
+                      gpu_name_features='cuda:0',
+                      max_pool_features=True
+                      )
