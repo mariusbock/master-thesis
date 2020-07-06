@@ -1,7 +1,7 @@
 import os
 import sys
 
-from evaluateTracking_modified import evaluateTracking
+from eval.evaluateTracking_modified import evaluateTracking
 from gcn_clustering.utils.logging import Logger
 
 files_path = 'logs/20200706/114353/'
