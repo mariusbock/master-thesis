@@ -14,30 +14,37 @@ from gcn_clustering.utils.logging import Logger
 from gcn_clustering.utils.osutils import mkdir_if_missing
 
 # general
-from misc import adjust_labeling, create_train_args, create_test_args, create_prediction_output_file
+from misc import adjust_labeling, create_train_args, create_test_args, create_prediction_output_file, \
+    create_modified_ground_truth_file
 
 date = time.strftime("%Y%m%d")
 timestamp = time.strftime("%H%M%S")
 directory = '../data/MOT/MOT17'
 
 train_sequence = 'MOT17-04'
-val_sequence = 'MOT17-04'
+val_sequence = 'MOT17-09'
 test_sequence = 'MOT17-02'
 
+# METADATA PATHS
 # metadata paths training
-path_meta_train_dpm = '20200630-133314_train_valid_metadata.csv'
-path_meta_train_frcnn = '20200630-140039_train_valid_metadata.csv'
-path_meta_train_sdp = '20200630-143448_train_valid_metadata.csv'
+path_meta_train_dpm = '20200704-190814_train_metadata.csv'
+path_meta_train_frcnn = '20200704-193423_train_metadata.csv'
+path_meta_train_sdp = '20200704-183451_train_metadata.csv'
 
 # metadata paths validation
-path_meta_val_dpm = '20200630-133314_train_valid_metadata.csv'
-path_meta_val_frcnn = '20200630-140039_train_valid_metadata.csv'
-path_meta_val_sdp = '20200630-143448_train_valid_metadata.csv'
+path_meta_val_dpm = '20200705-115238_valid_metadata.csv'
+path_meta_val_frcnn = '20200705-115400_valid_metadata.csv'
+path_meta_val_sdp = '20200705-115519_valid_metadata.csv'
 
 # metadata paths testing
-path_meta_test_dpm = '20200630-143631_test_metadata.csv'
-path_meta_test_frcnn = '20200630-144345_test_metadata.csv'
-path_meta_test_sdp = '20200630-144032_test_metadata.csv'
+path_meta_test_dpm = '20200704-143638_test_metadata.csv'
+path_meta_test_frcnn = '20200704-143943_test_metadata.csv'
+path_meta_test_sdp = '20200704-144343_test_metadata.csv'
+
+# GROUND TRUTH PATHS
+gt_train = np.loadtxt(os.path.join(directory, train_sequence + '-DPM', 'gt/gt.txt'), delimiter=',')
+gt_val = np.loadtxt(os.path.join(directory, val_sequence + '-DPM', 'gt/gt.txt'), delimiter=',')
+gt_test = np.loadtxt(os.path.join(directory, test_sequence + '-DPM', 'gt/gt.txt'), delimiter=',')
 
 # parameters
 # general
@@ -49,13 +56,13 @@ knn = 200
 knn_method = 'brute'
 input_channels = 2048 + 5
 
-label_column_train = 'labels_0.5_0.3_zero'
+label_column_train = 'labels_0.7_0.3_zero'
 label_column_valid = 'labels_0.5_0.3_zero'
 label_column_test = 'labels_0.5_0.3_zero'
 
 iou_column_train = 'fil_train_0.7_0.3'
 iou_column_valid = 'fil_valid_0.7_0.3'
-iou_column_test = 'is_included'
+iou_column_test = 'fil_test_0.5_0.3'
 
 # training
 k_at_hop_training = [200, 10]
@@ -193,15 +200,15 @@ test_feat_dpm = test_feat_dpm[meta_test_dpm[iou_column_test]]
 if len(train_labels_dpm) > knn:
     train_knn_graph_dpm = create_knn_graph_dataset(train_feat_dpm, knn, knn_method)
 else:
-    train_knn_graph_dpm = create_knn_graph_dataset(train_feat_dpm, len(train_labels_dpm), knn_method)
+    train_knn_graph_dpm = create_knn_graph_dataset(train_feat_dpm, len(train_labels_dpm)-1, knn_method)
 if len(val_labels_dpm) > knn:
     val_knn_graph_dpm = create_knn_graph_dataset(val_feat_dpm, knn, knn_method)
 else:
-    val_knn_graph_dpm = create_knn_graph_dataset(val_feat_dpm, len(val_labels_dpm), knn_method)
+    val_knn_graph_dpm = create_knn_graph_dataset(val_feat_dpm, len(val_labels_dpm)-1, knn_method)
 if len(test_labels_dpm) > knn:
     test_knn_graph_dpm = create_knn_graph_dataset(test_feat_dpm, knn, knn_method)
 else:
-    test_knn_graph_dpm = create_knn_graph_dataset(test_feat_dpm, len(test_labels_dpm), knn_method)
+    test_knn_graph_dpm = create_knn_graph_dataset(test_feat_dpm, len(test_labels_dpm)-1, knn_method)
 
 # print shapes of files
 print("TRAIN SHAPES DPM")
@@ -261,7 +268,18 @@ val_args_dpm = create_test_args(seed=seed,
                                 input_channels=input_channels
                                 )
 
-_, _ = test_main(train_state_dict_dpm, val_args_dpm)
+val_pred_dpm, val_pred_removed_dpm = test_main(train_state_dict_dpm, val_args_dpm)
+mkdir_if_missing(os.path.join('../logs', date, timestamp, val_sequence + '-DPM_val_full'))
+#mkdir_if_missing(os.path.join('../logs', date, timestamp, val_sequence + '-DPM_val_removed'))
+
+val_pred_dpm = create_prediction_output_file(meta_val_dpm, val_pred_dpm, iou_column_valid)
+#val_pred_removed_dpm = val_pred_removed_dpm
+val_mod_gt_dpm = create_modified_ground_truth_file(gt_val, meta_val_dpm, iou_column_valid)
+
+np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-DPM_val_full', 'eval_input.txt'), val_pred_dpm, delimiter=' ')
+np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-DPM_val_full', 'gt.txt'), val_mod_gt_dpm, delimiter=',')
+#np.save(os.path.join('../logs', date, timestamp, val_sequence + '-DPM_val_removed', 'pred_removed.npy'), val_pred_removed_dpm)
+#np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-DPM_val_removed', 'gt.txt'), val_mod_gt_dpm, delimiter=',')
 
 # testing
 test_args_dpm = create_test_args(seed=seed,
@@ -284,13 +302,18 @@ test_args_dpm = create_test_args(seed=seed,
                                  )
 
 test_pred_dpm, test_pred_removed_dpm = test_main(train_state_dict_dpm, test_args_dpm)
-mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-DPM'))
+mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-DPM_test_full'))
+#mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-DPM_test_removed'))
 
-test_pred_dpm = create_prediction_output_file(meta_test_dpm, test_pred_dpm)
-test_pred_removed_dpm = test_pred_removed_dpm
+test_pred_dpm = create_prediction_output_file(meta_test_dpm, test_pred_dpm, iou_column_test)
+#test_pred_removed_dpm = test_pred_removed_dpm
+test_mod_gt_dpm = create_modified_ground_truth_file(gt_test, meta_test_dpm, iou_column_test)
 
-np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-DPM', 'eval_input_full.npy'), test_pred_dpm, delimiter=' ')
-np.save(os.path.join('../logs', date, timestamp, test_sequence + '-DPM', 'pred_removed.npy'), test_pred_removed_dpm)
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-DPM_test_full', 'eval_input.txt'), test_pred_dpm, delimiter=' ')
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-DPM_test_full', 'gt.txt'), test_mod_gt_dpm, delimiter=',')
+
+#np.save(os.path.join('../logs', date, timestamp, test_sequence + '-DPM_test_removed', 'pred_removed.npy'), test_pred_removed_dpm)
+#np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-DPM_test_removed', 'gt.txt'), test_mod_gt_dpm, delimiter=',')
 
 del train_labels_dpm, val_labels_dpm, test_labels_dpm, train_feat_dpm, val_feat_dpm, train_knn_graph_dpm, \
     val_knn_graph_dpm, test_knn_graph_dpm, meta_train_dpm, meta_val_dpm, meta_test_dpm, test_pred_dpm, \
@@ -315,15 +338,15 @@ test_feat_frcnn = test_feat_frcnn[meta_test_frcnn[iou_column_test]]
 if len(train_labels_frcnn) > knn:
     train_knn_graph_frcnn = create_knn_graph_dataset(train_feat_frcnn, knn, knn_method)
 else:
-    train_knn_graph_frcnn = create_knn_graph_dataset(train_feat_frcnn, len(train_labels_frcnn), knn_method)
+    train_knn_graph_frcnn = create_knn_graph_dataset(train_feat_frcnn, len(train_labels_frcnn)-1, knn_method)
 if len(val_labels_frcnn) > knn:
     val_knn_graph_frcnn = create_knn_graph_dataset(val_feat_frcnn, knn, knn_method)
 else:
-    val_knn_graph_frcnn = create_knn_graph_dataset(val_feat_frcnn, len(val_labels_frcnn), knn_method)
+    val_knn_graph_frcnn = create_knn_graph_dataset(val_feat_frcnn, len(val_labels_frcnn)-1, knn_method)
 if len(test_labels_frcnn) > knn:
     test_knn_graph_frcnn = create_knn_graph_dataset(test_feat_frcnn, knn, knn_method)
 else:
-    test_knn_graph_frcnn = create_knn_graph_dataset(test_feat_frcnn, len(test_labels_frcnn), knn_method)
+    test_knn_graph_frcnn = create_knn_graph_dataset(test_feat_frcnn, len(test_labels_frcnn)-1, knn_method)
 
 # print shapes of files
 print("TRAIN SHAPES FRCNN")
@@ -383,7 +406,19 @@ val_args_frcnn = create_test_args(seed=seed,
                                   input_channels=input_channels
                                   )
 
-_, _ = test_main(train_state_dict_frcnn, val_args_frcnn)
+val_pred_frcnn, val_pred_removed_frcnn = test_main(train_state_dict_frcnn, val_args_frcnn)
+mkdir_if_missing(os.path.join('../logs', date, timestamp, val_sequence + '-FRCNN_val_full'))
+#mkdir_if_missing(os.path.join('../logs', date, timestamp, val_sequence + '-FRCNN_val_removed'))
+
+val_pred_frcnn = create_prediction_output_file(meta_val_frcnn, val_pred_frcnn, iou_column_valid)
+#val_pred_removed_frcnn = val_pred_removed_frcnn
+val_mod_gt_frcnn = create_modified_ground_truth_file(gt_val, meta_val_frcnn, iou_column_valid)
+
+np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-FRCNN_val_full', 'eval_input.txt'), val_pred_frcnn, delimiter=' ')
+np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-FRCNN_val_full', 'gt.txt'), val_mod_gt_frcnn, delimiter=',')
+
+#np.save(os.path.join('../logs', date, timestamp, val_sequence + '-FRCNN_val_removed', 'pred_removed.npy'), val_pred_removed_frcnn)
+#np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-FRCNN_val_removed', 'gt.txt'), val_mod_gt_frcnn, delimiter=',')
 
 # testing
 test_args_frcnn = create_test_args(seed=seed,
@@ -406,13 +441,18 @@ test_args_frcnn = create_test_args(seed=seed,
                                    )
 
 test_pred_frcnn, test_pred_removed_frcnn = test_main(train_state_dict_frcnn, test_args_frcnn)
-mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN'))
+mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN_test_full'))
+#mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN_test_removed'))
 
-test_pred_frcnn = create_prediction_output_file(meta_test_frcnn, test_pred_frcnn)
-test_pred_removed_frcnn = test_pred_removed_frcnn
+test_pred_frcnn = create_prediction_output_file(meta_test_frcnn, test_pred_frcnn, iou_column_test)
+#test_pred_removed_frcnn = test_pred_removed_frcnn
+test_mod_gt_frcnn = create_modified_ground_truth_file(gt_test, meta_test_frcnn, iou_column_test)
 
-np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN', 'eval_input_full.npy'), test_pred_frcnn, delimiter=' ')
-np.save(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN', 'pred_removed.npy'), test_pred_removed_frcnn)
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN_test_full', 'eval_input.txt'), test_pred_frcnn, delimiter=' ')
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN_test_full', 'gt.txt'), test_mod_gt_frcnn, delimiter=',')
+
+#np.save(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN_test_removed', 'pred_removed.npy'), test_pred_removed_frcnn)
+#np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-FRCNN_test_removed', 'gt.txt'), test_mod_gt_frcnn, delimiter=',')
 
 del train_labels_frcnn, val_labels_frcnn, test_labels_frcnn, train_feat_frcnn, val_feat_frcnn, train_knn_graph_frcnn, \
     val_knn_graph_frcnn, test_knn_graph_frcnn, meta_train_frcnn, meta_val_frcnn, meta_test_frcnn, \
@@ -436,15 +476,15 @@ test_feat_sdp = test_feat_sdp[meta_test_sdp[iou_column_test]]
 if len(train_labels_sdp) > knn:
     train_knn_graph_sdp = create_knn_graph_dataset(train_feat_sdp, knn, knn_method)
 else:
-    train_knn_graph_sdp = create_knn_graph_dataset(train_feat_sdp, len(train_labels_sdp), knn_method)
+    train_knn_graph_sdp = create_knn_graph_dataset(train_feat_sdp, len(train_labels_sdp)-1, knn_method)
 if len(val_labels_sdp) > knn:
     val_knn_graph_sdp = create_knn_graph_dataset(val_feat_sdp, knn, knn_method)
 else:
-    val_knn_graph_sdp = create_knn_graph_dataset(val_feat_sdp, len(val_labels_sdp), knn_method)
+    val_knn_graph_sdp = create_knn_graph_dataset(val_feat_sdp, len(val_labels_sdp)-1, knn_method)
 if len(test_labels_sdp) > knn:
     test_knn_graph_sdp = create_knn_graph_dataset(test_feat_sdp, knn, knn_method)
 else:
-    test_knn_graph_sdp = create_knn_graph_dataset(test_feat_sdp, len(test_labels_sdp), knn_method)
+    test_knn_graph_sdp = create_knn_graph_dataset(test_feat_sdp, len(test_labels_sdp)-1, knn_method)
 
 # print shapes of files
 print("TRAIN SHAPES SDP")
@@ -504,7 +544,19 @@ val_args_sdp = create_test_args(seed=seed,
                                 input_channels=input_channels
                                 )
 
-_, _ = test_main(train_state_dict_sdp, val_args_sdp)
+val_pred_sdp, val_pred_removed_sdp = test_main(train_state_dict_sdp, val_args_sdp)
+mkdir_if_missing(os.path.join('../logs', date, timestamp, val_sequence + '-SDP_val_full'))
+#mkdir_if_missing(os.path.join('../logs', date, timestamp, val_sequence + '-SDP_val_removed'))
+
+val_pred_sdp = create_prediction_output_file(meta_val_sdp, val_pred_sdp, iou_column_valid)
+val_pred_removed_sdp = val_pred_removed_sdp
+val_mod_gt_sdp = create_modified_ground_truth_file(gt_val, meta_val_sdp, iou_column_valid)
+
+np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-SDP_val_full', 'eval_input.txt'), val_pred_sdp, delimiter=' ')
+np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-SDP_val_full', 'gt.txt'), val_mod_gt_sdp, delimiter=',')
+
+#np.save(os.path.join('../logs', date, timestamp, val_sequence + '-SDP_val_removed', 'pred_removed.npy'), val_pred_removed_sdp)
+#np.savetxt(os.path.join('../logs', date, timestamp, val_sequence + '-SDP_val_removed', 'gt.txt'), val_mod_gt_sdp, delimiter=',')
 
 # testing
 test_args_sdp = create_test_args(seed=seed,
@@ -527,10 +579,15 @@ test_args_sdp = create_test_args(seed=seed,
                                  )
 
 test_pred_sdp, test_pred_removed_sdp = test_main(train_state_dict_sdp, test_args_sdp)
-mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-SDP'))
+mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-SDP_test_full'))
+#mkdir_if_missing(os.path.join('../logs', date, timestamp, test_sequence + '-SDP_test_removed'))
 
-test_pred_sdp = create_prediction_output_file(meta_test_sdp, test_pred_sdp)
+test_pred_sdp = create_prediction_output_file(meta_test_sdp, test_pred_sdp, iou_column_test)
 test_pred_removed_sdp = test_pred_removed_sdp
+test_mod_gt_sdp = create_modified_ground_truth_file(gt_test, meta_test_sdp, iou_column_test)
 
-np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-SDP', 'eval_input_full.txt'), test_pred_sdp, delimiter=' ')
-np.save(os.path.join('../logs', date, timestamp, test_sequence + '-SDP', 'pred_removed.npy'), test_pred_removed_sdp)
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-SDP_test_full', 'eval_input.txt'), test_pred_sdp, delimiter=' ')
+np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-SDP_test_full', 'gt.txt'), test_mod_gt_sdp, delimiter=',')
+
+#np.save(os.path.join('../logs', date, timestamp, test_sequence + '-SDP_test_removed', 'pred_removed.npy'), test_pred_removed_sdp)
+#np.savetxt(os.path.join('../logs', date, timestamp, test_sequence + '-SDP_test_removed', 'gt.txt'), test_mod_gt_sdp, delimiter=',')

@@ -1,0 +1,4 @@
+name
+MOT17-09-DPM_val_full
+MOT17-09-FRCNN_val_full
+MOT17-09-SDP_val_full

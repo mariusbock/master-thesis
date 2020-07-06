@@ -1,3 +1,4 @@
+import itertools
 import os
 import time
 
@@ -9,7 +10,7 @@ from sklearn.neighbors import NearestNeighbors
 from torchvision import transforms, ops
 
 from resnet_modified import resnet50
-import utils
+import misc
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -87,7 +88,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
             # save ground truth bounding box into array
             gt_bbox = [gt_line[2], gt_line[3], gt_line[2] + gt_line[4], gt_line[3] + gt_line[5]]
             # calculate iou between detection and ground truth bbox
-            curr_iou = utils.iou(det_bbox, gt_bbox)
+            curr_iou = misc.iou(det_bbox, gt_bbox)
             # if iou is larger than any other previous observed iou (i.e. compare to one saved in iou_array)
             if curr_iou > iou_array[int(det_line[0])]:
                 # then make current iou new largest one and update iou_array as well as gt_bbox arrays
@@ -298,7 +299,7 @@ def create_appearance_feature_dataset(detection_file, image_folder, batch_size, 
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     # load dataset using custom function that also returns the path of the image
-    dataset = utils.ImageFolderWithPaths(root=image_folder, transform=preprocess)
+    dataset = misc.ImageFolderWithPaths(root=image_folder, transform=preprocess)
     # define data loader (currently only batch size 1 is supported)
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=1, shuffle=False)
     # define ResNet model using modified file
@@ -383,75 +384,35 @@ def create_knn_graph_dataset(features_file, neighbors, method):
     return output_knn_graph
 
 
-def filter_train_valid_test_dataset_for_iou(metadata_file, iou_train, iou_valid, iou_test, lower_bound):
+def filter_split_column_for_iou(metadata_file, iou_type, iou_upper, iou_lower):
     """
     Function used to filter a metadata_file to create different versions of the train, valid and test filter array.
     For each value of iou_train, iou_valid and iou_test it creates a new column that contains a filter array, that
     will return you a dataset that assumes a different iou upper bound threshold.
     """
-    for tr_iou in iou_train:
+    for iou in itertools.product(iou_upper, iou_lower):
         # create a filter array column for the new train dataset with tr_iou as new upper bound
-        metadata_file['fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = False
-        for va_iou in iou_valid:
-            # create a filter array column for the new valid dataset with va_iou as new upper bound
-            metadata_file['fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = False
-            for te_iou in iou_test:
-                # create a filter array column for the new test dataset with te_iou as new upper bound
-                metadata_file['fil_test_' + str(te_iou) + "_" + str(lower_bound)] = False
-                for i, det in metadata_file.iterrows():
-                    # for each detection, check whether it was train, valid or test
-                    # if so then check for new upper and original lower bound to obtain a new filter array
-                    if det['is_train']:
-                        if det['iou'] > tr_iou:
-                            metadata_file.at[i, 'fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = True
-                        elif det['iou'] < lower_bound:
-                            metadata_file.at[i, 'fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = True
-                    elif det['is_valid']:
-                        if det['iou'] > va_iou:
-                            metadata_file.at[i, 'fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = True
-                        elif det['iou'] < lower_bound:
-                            metadata_file.at[i, 'fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = True
-                    elif det['is_test']:
-                        if det['iou'] > te_iou:
-                            metadata_file.at[i, 'fil_test_' + str(te_iou) + "_" + str(lower_bound)] = True
-                        elif det['iou'] < lower_bound:
-                            metadata_file.at[i, 'fil_valid_' + str(te_iou) + "_" + str(lower_bound)] = True
-
+        metadata_file['fil_' + iou_type + '_' + str(iou[0]) + "_" + str(iou[1])] = False
+        for i, det in metadata_file.iterrows():
+            # for each detection, check whether it was train, valid or test
+            # if so then check for new upper and original lower bound to obtain a new filter array
+            try:
+                if det['is_' + iou_type]:
+                    if det['iou'] > iou[0]:
+                        metadata_file.at[i, 'fil_' + iou_type + '_' + str(iou[0]) + "_" + str(iou[1])] = True
+                    elif det['iou'] < iou[1]:
+                        metadata_file.at[i, 'fil_' + iou_type + '_' + str(iou[0]) + "_" + str(iou[1])] = True
+            except KeyError:
+                if det['iou'] > iou[0]:
+                    metadata_file.at[i, 'fil_' + iou_type + '_' + str(iou[0]) + "_" + str(iou[1])] = True
+                elif det['iou'] < iou[1]:
+                    metadata_file.at[i, 'fil_' + iou_type + '_' + str(iou[0]) + "_" + str(iou[1])] = True
     return metadata_file
 
 
-def filter_train_valid_dataset_for_iou(metadata_file, iou_train, iou_valid, lower_bound):
-    """
-    Function used to filter a metadata_file to create different versions of the train and valid filter array.
-    For each value of iou_train and iou_valid it creates a new column that contains a filter array, that
-    will return you a dataset that assumes a different iou upper bound threshold.
-    """
-    for tr_iou in iou_train:
-        # create a filter array column for the new train dataset with tr_iou as new upper bound
-        metadata_file['fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = False
-        for va_iou in iou_valid:
-            # create a filter array column for the new valid dataset with va_iou as new upper bound
-            metadata_file['fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = False
-            for i, det in metadata_file.iterrows():
-                # for each detection, check whether it was train, valid or test
-                # if so then check for new upper and original lower bound to obtain a new filter array
-                if det['is_train']:
-                    if det['iou'] > tr_iou:
-                        metadata_file.at[i, 'fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = True
-                    elif det['iou'] < lower_bound:
-                        metadata_file.at[i, 'fil_train_' + str(tr_iou) + "_" + str(lower_bound)] = True
-                elif det['is_valid']:
-                    if det['iou'] > va_iou:
-                        metadata_file.at[i, 'fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = True
-                    elif det['iou'] < lower_bound:
-                        metadata_file.at[i, 'fil_valid_' + str(va_iou) + "_" + str(lower_bound)] = True
-
-    return metadata_file
-
-
-def create_train_valid_files(data_directory, sequence, det_path, gt_path, img_path, iou_range_labeling, bg_handling,
-                             split_ratio, train_iou, valid_iou, batch_size_features, gpu_name_features,
-                             max_pool_features):
+def create_train_valid_test_files(data_directory, sequence, det_path, gt_path, img_path, bg_handling, split_ratio,
+                                  train_iou_upper, train_iou_lower, valid_iou_upper, valid_iou_lower, test_iou_upper,
+                                  test_iou_lower, batch_size_features, gpu_name_features, max_pool_features):
     """
     Function that creates from a sequence a train-valid split according to split criteria and creates feature dataset
     for said sequence.
@@ -462,12 +423,14 @@ def create_train_valid_files(data_directory, sequence, det_path, gt_path, img_pa
         det_path -- path to detection file within sequence folder
         gt_path -- path to ground truth file within sequence folder
         img_path -- path to image folder within sequence folder
-        iou_range_labeling -- iou upper and lower bound for label creation (note upper bound needs to be lowest value of
-                              train_iou and valid_iou
         bg_handling -- background handling method during label creation (currently only "zero" supported)
-        split_ratio -- train/ valid split ratio
-        train_iou -- employed upper bound iou's in train set
-        valid_iou -- employed upper bound iou's in valid set
+        split_ratio -- train/ valid/ test split ratio (needs to be list of three percentage values)
+        train_iou_upper -- employed upper bound iou's in train set
+        train_iou_lower -- employed lower bound iou's in train set
+        valid_iou_upper -- employed upper bound iou's in valid set
+        valid_iou_lower -- employed lower bound iou's in valid set
+        test_iou_upper -- employed upper bound iou's in test set
+        test_iou_lower -- employed lower bound iou's in test set
         batch_size_features -- batch_size employed during feature creation
         gpu_name_features -- gpu used during feature creation
         max_pool_features -- boolean whether to max_pool or not after bbox extraction
@@ -494,7 +457,104 @@ def create_train_valid_files(data_directory, sequence, det_path, gt_path, img_pa
             meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
                                                  ground_truth_file=gt_file_mot,
                                                  metadata_file=meta_data_mot,
-                                                 iou_range=iou_range_labeling,
+                                                 iou_range=[min(min(train_iou_upper), min(valid_iou_upper),
+                                                                min(test_iou_upper)),
+                                                            max(max(train_iou_lower), max(valid_iou_lower),
+                                                                max(test_iou_lower))],
+                                                 background_handling=bg_handling
+                                                 )
+
+            # create train valid and test split and extend metadata file with filter arrays
+            meta_data_mot = create_train_valid_test(metadata_file=meta_data_mot,
+                                                    split_ratio=split_ratio,
+                                                    )
+
+            # use filter arrays to create different filter arrays that follow different iou thresholds
+            meta_data_mot = filter_split_column_for_iou(metadata_file=meta_data_mot,
+                                                        iou_type='train',
+                                                        iou_upper=train_iou_upper,
+                                                        iou_lower=train_iou_lower
+                                                        )
+            meta_data_mot = filter_split_column_for_iou(metadata_file=meta_data_mot,
+                                                        iou_type='valid',
+                                                        iou_upper=valid_iou_upper,
+                                                        iou_lower=valid_iou_lower
+                                                        )
+            meta_data_mot = filter_split_column_for_iou(metadata_file=meta_data_mot,
+                                                        iou_type='test',
+                                                        iou_upper=test_iou_upper,
+                                                        iou_lower=test_iou_lower
+                                                        )
+
+            spatial_features = create_spatial_feature_dataset(mod_det_file_mot)
+            appearance_features = create_appearance_feature_dataset(mod_det_file_mot, image_folder_path,
+                                                                    batch_size_features, gpu_name_features,
+                                                                    max_pool_features)
+
+            np.save(os.path.join(output_folder, "feat_spa.npy"), spatial_features)
+            if max_pool_features:
+                np.save(os.path.join(output_folder, "feat_app_pool.npy"), appearance_features)
+            else:
+                np.save(os.path.join(output_folder, "feat_app.npy"), appearance_features)
+
+            # save metadata file with current timestamp
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_train_valid_test_metadata.csv"), index=False,
+                                 float_format='%g')
+
+    end = time.time()
+    hours, rem = divmod(end - start, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print("Final time elapsed: {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
+
+
+def create_train_valid_files(data_directory, sequence, det_path, gt_path, img_path, bg_handling, split_ratio,
+                             train_iou_upper, train_iou_lower, valid_iou_upper, valid_iou_lower, batch_size_features,
+                             gpu_name_features, max_pool_features):
+    """
+    Function that creates from a sequence a train-valid-test split according to split criteria and creates feature
+    dataset for said sequence.
+    Parameters:
+        Parameters:
+        data_directory -- directory where sequence folder is located in
+        sequence -- name of sequence
+        det_path -- path to detection file within sequence folder
+        gt_path -- path to ground truth file within sequence folder
+        img_path -- path to image folder within sequence folder
+        bg_handling -- background handling method during label creation (currently only "zero" supported)
+        split_ratio -- train/ valid split ratio (needs to be list of two percentage values)
+        train_iou_upper -- employed upper bound iou's in train set
+        train_iou_lower -- employed lower bound iou's in train set
+        valid_iou_upper -- employed upper bound iou's in valid set
+        valid_iou_lower -- employed lower bound iou's in valid set
+        batch_size_features -- batch_size employed during feature creation
+        gpu_name_features -- gpu used during feature creation
+        max_pool_features -- boolean whether to max_pool or not after bbox extraction
+    """
+    print('Creating Train/ Valid Files for ' + sequence + '...')
+    start = time.time()
+    for detector in os.listdir(os.path.join(data_directory)):
+        if sequence in detector:
+            print('Processing Detector ' + detector + '...')
+            # load detection and ground truth file
+            det_file_mot = np.loadtxt(os.path.join(data_directory, detector, det_path), delimiter=",")
+            gt_file_mot = np.loadtxt(os.path.join(data_directory, detector, gt_path), delimiter=",")
+
+            # Folder variables
+            output_folder = os.path.join(data_directory, detector)
+            image_folder_path = os.path.join(data_directory, detector, img_path)
+
+            # create modified detection file and initialise metadata file
+            mod_det_file_mot = create_modified_detection_file(detection_file=det_file_mot)
+
+            meta_data_mot = create_meta_dataset(detection_file=mod_det_file_mot)
+
+            # create label dataset and metadata file
+            meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
+                                                 ground_truth_file=gt_file_mot,
+                                                 metadata_file=meta_data_mot,
+                                                 iou_range=[min(min(train_iou_upper), min(valid_iou_upper)),
+                                                            max(max(train_iou_lower), max(valid_iou_lower))],
                                                  background_handling=bg_handling
                                                  )
 
@@ -504,16 +564,21 @@ def create_train_valid_files(data_directory, sequence, det_path, gt_path, img_pa
                                                )
 
             # use filter arrays to create different filter arrays that follow different iou thresholds
-            meta_data_mot = filter_train_valid_dataset_for_iou(metadata_file=meta_data_mot,
-                                                               iou_train=train_iou,
-                                                               iou_valid=valid_iou,
-                                                               lower_bound=iou_range_labeling[1]
-                                                               )
+            meta_data_mot = filter_split_column_for_iou(metadata_file=meta_data_mot,
+                                                        iou_type='train',
+                                                        iou_upper=train_iou_upper,
+                                                        iou_lower=train_iou_lower
+                                                        )
+            meta_data_mot = filter_split_column_for_iou(metadata_file=meta_data_mot,
+                                                        iou_type='valid',
+                                                        iou_upper=valid_iou_upper,
+                                                        iou_lower=valid_iou_lower
+                                                        )
 
             spatial_features = create_spatial_feature_dataset(mod_det_file_mot)
             appearance_features = create_appearance_feature_dataset(mod_det_file_mot, image_folder_path,
-                                                                    batch_size_features,
-                                                                    gpu_name_features, max_pool_features)
+                                                                    batch_size_features, gpu_name_features,
+                                                                    max_pool_features)
 
             np.save(os.path.join(output_folder, "feat_spa.npy"), spatial_features)
             if max_pool_features:
@@ -532,8 +597,8 @@ def create_train_valid_files(data_directory, sequence, det_path, gt_path, img_pa
     print("Final time elapsed: {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
 
 
-def create_test_files(data_directory, sequence, det_path, gt_path, img_path, iou_range_labeling, bg_handling,
-                      batch_size_features, gpu_name_features, max_pool_features):
+def create_files(file_type, data_directory, sequence, det_path, gt_path, img_path, iou_upper, iou_lower, bg_handling,
+                 batch_size_features, gpu_name_features, max_pool_features):
     """
     Function that creates from a sequence a test set.
     Parameters:
@@ -549,7 +614,7 @@ def create_test_files(data_directory, sequence, det_path, gt_path, img_path, iou
         gpu_name_features -- gpu used during feature creation
         max_pool_features -- boolean whether to max_pool or not after bbox extraction
     """
-    print('Creating Test Files for ' + sequence + '...')
+    print('Creating ' + file_type + ' Files for ' + sequence + '...')
     start = time.time()
     for detector in os.listdir(os.path.join(data_directory)):
         if sequence in detector:
@@ -557,7 +622,7 @@ def create_test_files(data_directory, sequence, det_path, gt_path, img_path, iou
             # load detection and ground truth file
             det_file_mot = np.loadtxt(os.path.join(data_directory, detector, det_path),
                                       delimiter=",")
-            gt_file_mot = np.loadtxt(os.path.join(data_directory, gt_path), delimiter=",")
+            gt_file_mot = np.loadtxt(os.path.join(data_directory, detector, gt_path), delimiter=",")
 
             # Folder variables
             output_folder = os.path.join(data_directory, detector)
@@ -569,16 +634,23 @@ def create_test_files(data_directory, sequence, det_path, gt_path, img_path, iou
             meta_data_mot = create_meta_dataset(detection_file=mod_det_file_mot)
 
             # create label dataset and metadata file
-            label_dataset_mot, meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
-                                                                    ground_truth_file=gt_file_mot,
-                                                                    metadata_file=meta_data_mot,
-                                                                    iou_range=iou_range_labeling,
-                                                                    background_handling=bg_handling
-                                                                    )
+            meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
+                                                 ground_truth_file=gt_file_mot,
+                                                 metadata_file=meta_data_mot,
+                                                 iou_range=[min(iou_upper), max(iou_lower)],
+                                                 background_handling=bg_handling
+                                                 )
+
+            meta_data_mot = filter_split_column_for_iou(metadata_file=meta_data_mot,
+                                                        iou_type=file_type,
+                                                        iou_upper=iou_upper,
+                                                        iou_lower=iou_lower
+                                                        )
 
             # save metadata file with current timestamp
             timestamp = time.strftime("%Y%m%d-%H%M%S")
-            meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_test" + "_metadata.csv"), index=False,
+            meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_" + file_type + "_metadata.csv"),
+                                 index=False,
                                  float_format='%g')
 
             # create spatial and feature dataset
@@ -600,29 +672,79 @@ def create_test_files(data_directory, sequence, det_path, gt_path, img_path, iou
 
 
 if __name__ == '__main__':
+    create_train_valid_test_files(data_directory='data/MOT/MOT17',
+                                  sequence='MOT17-09',
+                                  det_path='det/det.txt',
+                                  gt_path='gt/gt.txt',
+                                  img_path='img',
+                                  bg_handling='zero',
+                                  split_ratio=[0.8, 0.1, 0.1],
+                                  train_iou_upper=[0.7],
+                                  train_iou_lower=[0.3],
+                                  valid_iou_upper=[0.7, 0.5],
+                                  valid_iou_lower=[0.3],
+                                  test_iou_upper=[0.5],
+                                  test_iou_lower=[0.3],
+                                  batch_size_features=1,
+                                  gpu_name_features='cuda:0',
+                                  max_pool_features=True
+                                  )
+
     create_train_valid_files(data_directory='data/MOT/MOT17',
-                             sequence='MOT17-04',
+                             sequence='MOT17-09',
                              det_path='det/det.txt',
                              gt_path='gt/gt.txt',
                              img_path='img',
-                             iou_range_labeling=[0.5, 0.3],
                              bg_handling='zero',
                              split_ratio=[0.8, 0.2],
-                             train_iou=[0.7],
-                             valid_iou=[0.5, 0.7],
+                             train_iou_upper=[0.7],
+                             train_iou_lower=[0.3],
+                             valid_iou_upper=[0.5, 0.7],
+                             valid_iou_lower=[0.3],
                              batch_size_features=1,
                              gpu_name_features='cuda:0',
                              max_pool_features=True
                              )
 
-    create_test_files(data_directory='data/MOT/MOT17',
-                      sequence='MOT17-02',
-                      det_path='det/det.txt',
-                      gt_path='gt/gt.txt',
-                      img_path='img',
-                      iou_range_labeling=[0.5, 0.3],
-                      bg_handling='zero',
-                      batch_size_features=1,
-                      gpu_name_features='cuda:0',
-                      max_pool_features=True
-                      )
+    create_files(file_type='train',
+                 data_directory='data/MOT/MOT17',
+                 sequence='MOT17-09',
+                 det_path='det/det.txt',
+                 gt_path='gt/gt.txt',
+                 img_path='img',
+                 bg_handling='zero',
+                 iou_upper=[0.7],
+                 iou_lower=[0.3],
+                 batch_size_features=1,
+                 gpu_name_features='cuda:0',
+                 max_pool_features=True
+                 )
+
+    create_files(file_type='valid',
+                 data_directory='data/MOT/MOT17',
+                 sequence='MOT17-09',
+                 det_path='det/det.txt',
+                 gt_path='gt/gt.txt',
+                 img_path='img',
+                 bg_handling='zero',
+                 iou_upper=[0.7, 0.5],
+                 iou_lower=[0.3],
+                 batch_size_features=1,
+                 gpu_name_features='cuda:0',
+                 max_pool_features=True
+                 )
+
+    create_files(file_type='test',
+                 data_directory='data/MOT/MOT17',
+                 sequence='MOT17-09',
+                 det_path='det/det.txt',
+                 gt_path='gt/gt.txt',
+                 img_path='img',
+                 iou_upper=[0.5],
+                 iou_lower=[0.3],
+                 bg_handling='zero',
+                 batch_size_features=1,
+                 gpu_name_features='cuda:0',
+                 max_pool_features=True
+                 )
+
