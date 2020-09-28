@@ -1,23 +1,77 @@
 function convert_script
-date = '20200706/';
-timestamp = '114353/';
+date = '20200924';
+timestamp = '225106';
+type = 'full';
 
-data_dir = '../data/MOT/MOT17/';    
-save_dir =  ['../logs/' date timestamp];
+data_dir = '../data/MOT/MOT17/train/';    
+save_dir =  ['../logs/' date '/' timestamp];
+gt_directory = data_dir;
+gt_path = '/gt/gt.txt';
+
+% runs = {
+%     'run_1' 'run_2' 'run_3' 'run_4' 'run_5' ...
+%     'run_6' 'run_7' 'run_8' 'run_9' 'run_10'
+% };
+
+runs = {
+    'run_1'
+};
+
 train_list = {
-    'MOT17-09-DPM' ...
-    'MOT17-09-FRCNN' ...
+    'MOT17-02-SDP' ...
+    'MOT17-04-SDP' ...
+    'MOT17-05-SDP' ...
     'MOT17-09-SDP' ...
+    'MOT17-10-SDP' ...
+    'MOT17-11-SDP' ...
+    'MOT17-13-SDP' ...
+    'MOT17-02-DPM' ...
+    'MOT17-04-DPM' ...
+    'MOT17-05-DPM' ...
+    'MOT17-09-DPM' ...
+    'MOT17-10-DPM' ...
+    'MOT17-11-DPM' ...
+    'MOT17-13-DPM' ...
+    'MOT17-02-FRCNN' ...
+    'MOT17-04-FRCNN' ...
+    'MOT17-05-FRCNN' ...
+    'MOT17-09-FRCNN' ...
+    'MOT17-10-FRCNN' ...
+    'MOT17-11-FRCNN' ...
+    'MOT17-13-FRCNN'
 };
 
-eval_types = {
-    'val' ...
-    'test'
-};
 
-pred_types = {
-    'full'
-};
+% train_list = {
+%     'MOT17-02-SDP' ...
+%     'MOT17-09-SDP' ...
+%     'MOT17-02-DPM' ...
+%     'MOT17-09-DPM' ...
+%     'MOT17-02-FRCNN' ...
+%     'MOT17-09-FRCNN' ...
+% };
+
+
+% train_list = {
+%     'MOT17-02-DPM' ...
+%     'MOT17-04-DPM' ...
+%     'MOT17-05-DPM' ...
+%     'MOT17-09-DPM' ...
+%     'MOT17-10-DPM' ...
+%     'MOT17-11-DPM' ...
+%     'MOT17-13-DPM'
+% };
+
+
+% train_list = {
+%     'MOT17-02-FRCNN' ...
+%     'MOT17-04-FRCNN' ...
+%     'MOT17-05-FRCNN' ...
+%     'MOT17-09-FRCNN' ...
+%     'MOT17-10-FRCNN' ...
+%     'MOT17-11-FRCNN' ...
+%     'MOT17-13-FRCNN'
+% };
 
 test_list = {
 %     'MOT17-01-SDP' ...
@@ -44,13 +98,82 @@ test_list = {
     };
 
 mota=[];
-minscore =  [0 0 0 0 0 0 0  -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 0 0 0 0 0 0 0];
+minscore = [0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ];
+% % One Sequence
+% % SDP
+% minscore(1:1)=0;
+% % DPM
+% minscore(2:2)=-0.1;
+% % FRCNN
+% minscore(3:3)=0;
+
+% % Two Sequences
+% % SDP
+% minscore(1:2)=0;
+% % DPM
+% minscore(3:4)=-0.1;
+% % FRCNN
+% minscore(5:6)=0;
+
+% % Three Sequences
+% % SDP
+% minscore(1:3)=0;
+% % DPM
+% minscore(4:6)=-0.1;
+% % FRCNN
+% minscore(7:9)=0;
+
+% ORIGINAL
+% SDP
+minscore(1:7)=0;
+% DPM
+minscore(8:14)=-0.1;
+% FRCNN
+minscore(15:21)=0;
+
+% % ONLY ONE DETECTOR
+% % SDP
+% minscore(1:7)=0.1;
+
 minlscore = [0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ];
-minlscore(8:14)=0.2;
+% % One Sequence
+% % SDP
+% minlscore(1:1)=0.5;
+% % DPM
+% minlscore(2:2)=0.2;
+% % FRCNN
+% minlscore(3:3)=0.5;
+% 
+% % Two Sequences
+% % SDP
+% minlscore(1:2)=0.5;
+% % DPM
+% minlscore(3:4)=0.2;
+% % FRCNN
+% minlscore(5:6)=0.5;
+
+% % Three Sequences
+% % SDP
+% minlscore(1:3)=0.5;
+% % DPM
+% minlscore(4:6)=0.2;
+% % FRCNN
+% minlscore(7:9)=0.5;
+
+% ORIGINAL
+% SDP
 minlscore(1:7)=0.5;
+% DPM
+minlscore(8:14)=0.2;
+% FRCNN
 minlscore(15:21)=0.5;
 
-is_smooth = [1 1 1 1 1 1 1 1 1 ] ;
+% % ONLY ONE DETECTOR
+% % SDP
+% minlscore(1:7)=0.2;
+
+% boolean (smoothing, interpolate)
+is_smooth = [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 ] ;
 fillin = [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 ];
 % shortest trajectory of pedestrian that is accepted
 ml = [5 5 5 5 5 5 5 ...
@@ -58,61 +181,58 @@ ml = [5 5 5 5 5 5 5 ...
       5 5 5 5 5 5 5 ];
 
 for i = 1:length(train_list)
-    for j = 1:length(eval_types)
-        for k = 1:length(pred_types)
-            train_sequence = train_list{i};
-            %tdata_set = test_list{i};
+    for j = 1:length(runs)
+        train_sequence = train_list{i};
+        run = runs{j};
+        %tdata_set = test_list{i};
 
-            eval_type = eval_types{j};
-            pred_type = pred_types{k};
+        % load ground truth
+        % gtInfo = [gt_directory train_sequence gt_path];
+        % gt = load(gtInfo);
 
-            % load ground truth
-            gtInfo = [save_dir train_sequence '_' eval_type '_' pred_type '/gt.txt'];
-            gt = load(gtInfo);
+        % load images list
+        seq_dir =  [data_dir train_sequence '/img/img1/' ];
+        im_list = dir([seq_dir, '*jpg']);
+        im_list = strcat(seq_dir,{im_list.name});
 
-            % load images list
-            seq_dir =  [data_dir train_sequence '/img/img1/' ];
-            im_list = dir([seq_dir, '*jpg']);
-            im_list = strcat(seq_dir,{im_list.name});
+        % get number of frames of sequence
+        num_frames = length(im_list);
 
-            % get number of frames of sequence
-            num_frames = length(im_list);
+        % save visualizations here, exclude if not enough storage
+        save_cluster_dir = [save_dir '/' run '/' type '/' train_sequence '/cluster_vis'];
+        if ~exist(save_cluster_dir)
+            mkdir(save_cluster_dir);
+        end
+    %     save_tracks_dir = [save_dir  train_sequence '/tracks_vis'];
+    %     if ~exist(save_tracks_dir)
+    %         mkdir(save_tracks_dir);
+    %     end
+    %     save_MOTA_dir = [save_dir train_sequence];
 
-            % save visualizations here, exclude if not enough storage
-            save_cluster_dir = [save_dir  train_sequence '_' eval_type '_' pred_type '/cluster_vis/'  '/full'];
-            if ~exist(save_cluster_dir)
-                mkdir(save_cluster_dir);
-            end
-            save_tracks_dir = [save_dir  train_sequence '_' eval_type '_' pred_type '/tracks_vis/'  '/full'];
-            if ~exist(save_tracks_dir)
-                mkdir(save_tracks_dir);
-            end
-            save_MOTA_dir = [save_dir train_sequence '_' eval_type '_' pred_type];
+        % load boxes
+        kboxes = load([save_dir '/' run '/' type '/' train_sequence '/eval_input.txt']);
+        idx=kboxes(:,2)>-1;
 
-            % load boxes
-            kboxes = load([save_dir train_sequence '_' eval_type '_' pred_type '/eval_input.txt']);
-            idx=kboxes(:,2)>-1;
+        % created boxes array from remaining detections
+        boxes=[];
+        boxes(:,1:2) = kboxes(:,3:4);
+        boxes(:,3:4) = kboxes(:,3:4)+ kboxes(:,5:6);
+        boxes(:,5) = kboxes(:,1)-1;
+        boxes(:,6) = kboxes(:,2)+1;
 
-            % created boxes array from remaining detections
-            boxes=[];
-            boxes(:,1:2) = kboxes(:,3:4);
-            boxes(:,3:4) = kboxes(:,3:4)+ kboxes(:,5:6);
-            boxes(:,5) = kboxes(:,1)-1;
-            boxes(:,6) = kboxes(:,2)+1;
+        % load original detections
+        cost_boxes = load([data_dir train_sequence '/det/det.txt']);
+        cost_boxes = cost_boxes(idx,:)';
+        oboxes = boxes(idx,:)';
 
-            % load original detections
-            cost_boxes = load([data_dir train_sequence '/det/det.txt']);
-            cost_boxes = cost_boxes(idx,:)';
-            oboxes = boxes(idx,:)';
+        cost_boxes=-cost_boxes(7,1:end)';
+        cluster_list = unique(boxes(:,6));
+        clusters_all = convert_bbox_cluster(oboxes', -cost_boxes,minscore(i),minlscore(i));
 
-            cost_boxes=-cost_boxes(7,1:end)';
-            cluster_list = unique(boxes(:,6));
-            clusters_all = convert_bbox_cluster(oboxes', -cost_boxes,minscore(i),minlscore(i));
+        % evaluate
+        %fid = fopen([save_MOTA_dir '/record_all.txt'],'w');
 
-            % evaluate
-            fid = fopen([save_MOTA_dir '/record_all.txt'],'w');
-
-            min_size_list = [ml(i)];
+        min_size_list = [ml(i)];
         %     inds=find(gt(:,8)==1 );
         %     gt=gt(inds,:);
         %     gtTracks={};
@@ -126,40 +246,39 @@ for i = 1:length(train_list)
         %         end
         %     end
         %     gtTracks{end+1}=tt;
-            bbx_scale=88;
-            for m = 1:length(min_size_list)
-                min_size = min_size_list(m);
-                cluster_size_list = cellfun(@size, clusters_all,'UniformOutput',0);
-                cluster_size_list = cell2mat(cluster_size_list');
-                cluster_size_list = cluster_size_list(:,1);
-                clusters = clusters_all(cluster_size_list(:) > min_size );
+        bbx_scale=88;
+        for m = 1:length(min_size_list)
+            min_size = min_size_list(m);
+            cluster_size_list = cellfun(@size, clusters_all,'UniformOutput',0);
+            cluster_size_list = cell2mat(cluster_size_list');
+            cluster_size_list = cluster_size_list(:,1);
+            clusters = clusters_all(cluster_size_list(:) > min_size );
 
-                tracks = convert_cluster_to_tracklet(clusters,min_size, 1);
-                % submission
-        %         fprintf(fid, '\n min_size %d; \n', min_size);
-                tracks = fillingIn(tracks);
-        %         evaluate_tracking_e(tracks,gtTracks,num_frames,fid);
-                % visualization of the final result
-        %         cluster_vis(tracks,im_list,save_cluster_dir);
-            end
-            fclose(fid);
-
-            % convert to MOT evaluation format
-            result = [];
-            for t = 1:length(tracks)
-                track = tracks{t};
-                frame = track(:,5);
-                x = track(:,1); y = track(:,2);
-                w = (track(:,3) - track(:,1));
-                h = (track(:,4) - track(:,2));
-                pad =  repmat(-1, length(frame),4);
-                id = repmat(t, length(frame),1);
-                result{t} = [frame id x y w h pad];
-            end
-            result = cat(1, result{:});
-            save_txt = [save_dir train_sequence '_' eval_type '_' pred_type '/' train_sequence '.txt'];
-            dlmwrite(save_txt,result);
+            tracks = convert_cluster_to_tracklet(clusters,min_size, 1);
+            % submission
+            %         fprintf(fid, '\n min_size %d; \n', min_size);
+            tracks = fillingIn(tracks);
+            %         evaluate_tracking_e(tracks,gtTracks,num_frames,fid);
+            % visualization of the final result
+            cluster_vis(tracks,im_list,save_cluster_dir);
         end
+    %     fclose(fid);
+
+        % convert to MOT evaluation format
+        result = [];
+        for t = 1:length(tracks)
+            track = tracks{t};
+            frame = track(:,5);
+            x = track(:,1); y = track(:,2);
+            w = (track(:,3) - track(:,1));
+            h = (track(:,4) - track(:,2));
+            pad =  repmat(-1, length(frame),4);
+            id = repmat(t, length(frame),1);
+            result{t} = [frame id x y w h pad];
+        end
+        result = cat(1, result{:});
+        save_txt = [save_dir '/' run '/' type '/' train_sequence '/' train_sequence '.txt'];
+        dlmwrite(save_txt,result);
     end
 end
 end
