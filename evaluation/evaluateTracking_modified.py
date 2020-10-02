@@ -96,71 +96,26 @@ def generateSkippedGT(gtfile, skip, fmt):
     return tempfile
 
 
-def evaluateTracking_modGT(files_path, seqinfo_path, seqmap, log='', loglevel='info', fmt='mot15-2D', solver='', skip=0, iou=0.5):
+def evaluateTracking(pred_path, data_path, seqmap, is_split, log='', loglevel='info', fmt='mot15-2D', solver='', skip=0, iou=0.5):
     """
-    Main function that was slightly modified to take in different parameters and ground truth file suiting project's
-    data layout and returns summary object for further processing
-    """
+    Main function that was modified to take in different parameters suiting project's data layout
+    and returns summary object for further processing. is_split is indicating whether to use a modified ground truth
+    file (containing only detections of split) for evaluation.
 
-    # pylint: disable=missing-function-docstring
-    # pylint: disable=too-many-locals
+    Args:
+        pred_path -- path to log directory where prediction data is stored
+        data_path -- path to directory where sequence data is stored
+        seqmap -- path to seqmap to use for evaluation
+        is_split -- boolean indicating whether to use modified ground truth file
+        log -- see py-motmetrics documentation
+        loglevel -- see py-motmetrics documentation
+        fmt -- see py-motmetrics documentation
+        solver -- see py-motmetrics documentation
+        skip -- see py-motmetrics documentation
+        iou -- see py-motmetrics documentation
 
-    loglevel = getattr(logging, loglevel.upper(), None)
-    if not isinstance(loglevel, int):
-        raise ValueError('Invalid log level: {} '.format(loglevel))
-    logging.basicConfig(level=loglevel, format='%(asctime)s %(levelname)s - %(message)s', datefmt='%I:%M:%S')
-
-    if not solver == '':
-        mm.lap.default_solver = solver
-
-    seqs = parseSequences(seqmap)
-
-    gtfiles = [os.path.join(files_path, i, 'gt.txt') for i in seqs]
-    tsfiles = [os.path.join(files_path, i, '%s.txt' % i) for i in seqs]
-
-    for gtfile in gtfiles:
-        if not os.path.isfile(gtfile):
-            logging.error('gt File %s not found.', gtfile)
-            sys.exit(1)
-    for tsfile in tsfiles:
-        if not os.path.isfile(tsfile):
-            logging.error('res File %s not found.', tsfile)
-            sys.exit(1)
-
-    logging.info('Found %d groundtruths and %d test files.', len(gtfiles), len(tsfiles))
-    for seq in seqs:
-        logging.info('\t%s', seq)
-    logging.info('Available LAP solvers %s', str(mm.lap.available_solvers))
-    logging.info('Default LAP solver \'%s\'', mm.lap.default_solver)
-    logging.info('Loading files.')
-
-    if skip > 0 and 'mot' in fmt:
-        for i, gtfile in enumerate(gtfiles):
-            gtfiles[i] = generateSkippedGT(gtfile, skip, fmt=fmt)
-
-    gt = OrderedDict(
-        [(f.split('/')[-2].split('_')[0], (mm.io.loadtxt(f, fmt=fmt), os.path.join(seqinfo_path, f.split('/')[-2].split('_')[0], 'seqinfo.ini'))) for i, f in
-         enumerate(gtfiles)])
-    ts = OrderedDict([(f.split('/')[-1].split('.')[0], mm.io.loadtxt(f, fmt=fmt)) for i, f in enumerate(tsfiles)])
-
-    mh = mm.metrics.create()
-    st = time.time()
-    accs, analysis, names = compare_dataframes(gt, ts, log, 1. - iou)
-    logging.info('adding frames: %.3f seconds.', time.time() - st)
-
-    logging.info('Running metrics')
-
-    summary = mh.compute_many(accs, anas=analysis, names=names, metrics=mm.metrics.motchallenge_metrics,
-                              generate_overall=True)
-    print(mm.io.render_summary(summary, formatters=mh.formatters, namemap=mm.io.motchallenge_metric_names))
-    logging.info('Completed')
-    return summary
-
-
-def evaluateTracking(pred_path, data_path, seqmap, log='', loglevel='info', fmt='mot15-2D', solver='', skip=0, iou=0.5):
-    """
-    Main function that was slightly modified to take in different parameters suiting project's data layout
-    and returns summary object for further processing
+    Returns:
+        Summary object containing all calculated evaluation metrics for each sequence in seqmap
     """
     # pylint: disable=missing-function-docstring
     # pylint: disable=too-many-locals
@@ -174,8 +129,10 @@ def evaluateTracking(pred_path, data_path, seqmap, log='', loglevel='info', fmt=
         mm.lap.default_solver = solver
 
     seqs = parseSequences(seqmap)
-
-    gtfiles = [os.path.join(data_path, i, 'gt/gt.txt') for i in seqs]
+    if is_split:
+        gtfiles = [os.path.join(pred_path, i, 'gt.txt') for i in seqs]
+    else:
+        gtfiles = [os.path.join(data_path, i, 'gt/gt.txt') for i in seqs]
     tsfiles = [os.path.join(pred_path, i, '%s.txt' % i) for i in seqs]
 
     for gtfile in gtfiles:
@@ -197,12 +154,17 @@ def evaluateTracking(pred_path, data_path, seqmap, log='', loglevel='info', fmt=
     if skip > 0 and 'mot' in fmt:
         for i, gtfile in enumerate(gtfiles):
             gtfiles[i] = generateSkippedGT(gtfile, skip, fmt=fmt)
-
-    gt = OrderedDict(
-        [(f.split('/')[-3].split('_')[0], (mm.io.loadtxt(f, fmt=fmt), os.path.join(data_path, f.split('/')[-3].split('_')[0], 'seqinfo.ini'))) for i, f in
-         enumerate(gtfiles)])
+    if is_split:
+        gt = OrderedDict([
+            (f.split('/')[-2].split('_')[0], (mm.io.loadtxt(f, fmt=fmt), os.path.join(data_path,
+             f.split('/')[-2].split('_')[0], 'seqinfo.ini'))) for i, f in enumerate(gtfiles)
+        ])
+    else:
+        gt = OrderedDict([
+            (f.split('/')[-3].split('_')[0], (mm.io.loadtxt(f, fmt=fmt), os.path.join(data_path,
+             f.split('/')[-3].split('_')[0], 'seqinfo.ini'))) for i, f in enumerate(gtfiles)
+        ])
     ts = OrderedDict([(f.split('/')[-1].split('.')[0], mm.io.loadtxt(f, fmt=fmt)) for i, f in enumerate(tsfiles)])
-
     mh = mm.metrics.create()
     st = time.time()
     accs, analysis, names = compare_dataframes(gt, ts, log, 1. - iou)
