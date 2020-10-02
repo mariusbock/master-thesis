@@ -1,4 +1,0 @@
-name
-MOT17-09-DPM_test_full
-MOT17-09-FRCNN_test_full
-MOT17-09-SDP_test_full

@@ -1,4 +1,0 @@
-name
-MOT17-02-DPM_val_full
-MOT17-02-FRCNN_val_full
-MOT17-02-SDP_val_full
