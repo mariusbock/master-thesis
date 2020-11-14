@@ -2,4 +2,4 @@ data
 .idea
 logs
 networks/pretrained_models
-graph/build
+pfs_heuristic/build
