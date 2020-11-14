@@ -1,13 +1,18 @@
+###################################################################
 # py-motmetrics - Metrics for multiple object tracker (MOT) benchmarking.
 # https://github.com/cheind/py-motmetrics/
 #
 # MIT License
 # Copyright (c) 2017-2020 Christoph Heindl, Jack Valmadre and others.
 # See LICENSE file for terms.
+# File taken from PyPi distribution of py-motmetrics (version 1.2.0)
+# Modified by: Marius Bock
+# mail: marius.bock@protonmail.com
+###################################################################
 
 """
 Compute metrics for trackers using MOTChallenge ground-truth data. Added slight modifications to this file
-to fit workflow (compare to original evaluateTracking.py).
+to fit workflow (compare to original evaluateTracking.py of PyPi package motmetrics (version 1.2.0)).
 """
 
 from __future__ import absolute_import
@@ -96,7 +101,8 @@ def generateSkippedGT(gtfile, skip, fmt):
     return tempfile
 
 
-def evaluateTracking(pred_path, data_path, seqmap, is_split, log='', loglevel='info', fmt='mot15-2D', solver='', skip=0, iou=0.5):
+def evaluateTracking(pred_path, data_path, seqmap, is_split, log='', loglevel='info', fmt='mot15-2D', solver='',
+                     skip=0, iou=0.5):
     """
     Main function that was modified to take in different parameters suiting project's data layout
     and returns summary object for further processing. is_split is indicating whether to use a modified ground truth
@@ -134,7 +140,6 @@ def evaluateTracking(pred_path, data_path, seqmap, is_split, log='', loglevel='i
     else:
         gtfiles = [os.path.join(data_path, i, 'gt/gt.txt') for i in seqs]
     tsfiles = [os.path.join(pred_path, i, '%s.txt' % i) for i in seqs]
-
     for gtfile in gtfiles:
         if not os.path.isfile(gtfile):
             logging.error('gt File %s not found.', gtfile)
