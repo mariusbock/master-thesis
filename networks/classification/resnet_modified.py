@@ -1,4 +1,14 @@
-import torch
+###################################################################
+# File Name: resnet_modified.py
+# Original File: resnet.py of PyTorch distribution (version 1.4.0)
+# Modified by: Marius Bock
+# mail: marius.bock@protonmail.com
+###################################################################
+
+"""
+Altered the original ResNet file of PyTorch distribution to return feature map instead of final classification results
+"""
+
 import torch.nn as nn
 from torchvision.models.utils import load_state_dict_from_url
 
@@ -194,6 +204,8 @@ class ResNet(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
 
+        # HERE: Altered network so that last classification layers are not computed
+        # INSTEAD: feature map of layer 4 is returned
         #x = self.avgpool(x)
         #x = torch.flatten(x, 1)
         #x = self.fc(x)
