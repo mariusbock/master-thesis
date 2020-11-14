@@ -1,3 +1,9 @@
+###################################################################
+# File Name: dataset_creation.py
+# Author: Marius Bock
+# mail: marius.bock@protonmail.com
+###################################################################
+
 import os
 import time
 
@@ -10,9 +16,9 @@ from torchvision import transforms, ops
 from math import *
 from decimal import Decimal
 
-from networks.person.network_sn_101 import ACSPNet
-from networks.appearance.resnet_modified import resnet50
-from networks.reidentification.reidentification_models import ft_net
+from networks.person.network_sn_101_modified import ACSPNet
+from networks.classification.resnet_modified import resnet50
+from networks.reidentification.reidentification_models_modified import ft_net
 import misc
 
 pd.options.mode.chained_assignment = None  # default='warn'
@@ -66,7 +72,7 @@ def create_modified_detection_file(detection_file):
     return output_det
 
 
-def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_ranges, background_handling):
+def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_ranges_list, background_handling):
     """
     Function that creates a dataset containing the detection id and its corresponding assigned label. The labels
     are obtained by calculating the iou (intersection over union) between each detection and ground truth box and saving
@@ -79,8 +85,8 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
         detection_file -- detection file used to create label dataset
         metadata_file -- metadata file where results are saved to
         ground_truth_file -- ground truth file of detection
-        iou_ranges -- list of iou ranges to employ for label calculation (list of pairs (upper and lower threshold))
-        background_handling --
+        iou_ranges_list -- list of iou ranges to employ for label calculation (list of pairs (upper & lower threshold))
+        background_handling -- background handling to employ for label creation ('clusters' or 'singletons')
 
     Returns:
         Modified metadata file that contains assigned labels as well as corresponding ground truth bounding boxes for
@@ -100,7 +106,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
     metadata_file['background_handling'] = background_handling
 
     # create columns for each split_iou employed
-    for iou in iou_ranges:
+    for iou in iou_ranges_list:
         metadata_file['labels_' + str(iou[0]) + "_" + str(iou[1])] = -1
         metadata_file['is_class_' + str(iou[0]) + "_" + str(iou[1])] = False
         metadata_file['is_background_' + str(iou[0]) + "_" + str(iou[1])] = False
@@ -109,7 +115,9 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
     # main for loop for iterating through each detection
     for i, (det_line) in enumerate(detection_file):
         # only compare detection to ground truth bounding boxes from same frame which are not occluded (i.e. visible)
-        filtered_ground_truth = [line for line in ground_truth_file if line[0] == det_line[1] and line[7] != 0]
+        filtered_ground_truth = ground_truth_file[ground_truth_file[:, 0] == det_line[1]]
+        filtered_ground_truth = filtered_ground_truth[filtered_ground_truth[:, 7] != 0]
+        #filtered_ground_truth = [line for line in ground_truth_file if line[0] == det_line[1] and line[7] != 0]
         # save detection bounding box into array
         det_bbox = [det_line[3], det_line[4], det_line[3] + det_line[5], det_line[4] + det_line[6]]
         # for loop for iterating through ground truth lines
@@ -128,7 +136,7 @@ def create_label_dataset(detection_file, metadata_file, ground_truth_file, iou_r
                 metadata_file.at[i, 'gt_w'] = gt_line[4]
                 metadata_file.at[i, 'gt_h'] = gt_line[5]
                 # loop over all iou ranges for which detection is to be evaluated
-                for iou in iou_ranges:
+                for iou in iou_ranges_list:
                     # create new columns for current iou threshold
                     label_column = 'labels_' + str(iou[0]) + "_" + str(iou[1])
                     cl_column = 'is_class_' + str(iou[0]) + "_" + str(iou[1])
@@ -187,9 +195,9 @@ def create_three_split(metadata_file, split_ratio, split_iou):
         Metadata file with appended boolean columns for the split
     """
     # create filter array columns in metadata_file
-    train_column = 'is_train_two_split_' + split_iou[0] + '_' + split_iou[1]
-    valid_column = 'is_valid_two_split_' + split_iou[0] + '_' + split_iou[1]
-    test_column = 'is_test_two_split_' + split_iou[0] + '_' + split_iou[1]
+    train_column = 'is_train_three_split_' + str(split_iou[0]) + '_' + str(split_iou[1])
+    valid_column = 'is_valid_three_split_' + str(split_iou[0]) + '_' + str(split_iou[1])
+    test_column = 'is_test_three_split_' + str(split_iou[0]) + '_' + str(split_iou[1])
     metadata_file[train_column] = False
     metadata_file[valid_column] = False
     metadata_file[test_column] = False
@@ -296,8 +304,8 @@ def create_two_split(metadata_file, split_ratio, split_iou):
         Metadata file with appended boolean columns for the split
     """
     # create filter array columns in metadata_file
-    train_column = 'is_train_two_split_' + split_iou[0] + '_' + split_iou[1]
-    valid_column = 'is_valid_two_split_' + split_iou[0] + '_' + split_iou[1]
+    train_column = 'is_train_two_split_' + str(split_iou[0]) + '_' + str(split_iou[1])
+    valid_column = 'is_valid_two_split_' + str(split_iou[0]) + '_' + str(split_iou[1])
     metadata_file[train_column] = False
     metadata_file[valid_column] = False
 
@@ -366,13 +374,13 @@ def create_two_split(metadata_file, split_ratio, split_iou):
     return metadata_file
 
 
-def create_appearance_feature_dataset(detection_file, image_folder, batch_size, gpu_name, max_pool):
+def create_classification_feature_dataset(detection_file, image_folder, batch_size, gpu_name, max_pooling):
     """
     Function that creates for each detection a feature array using ResNet50 and RoI-Align.
     Each Image is feed into the resnet, which is modified to return the feature map before the first fc-layer as output.
     Once the feature map is obtained all detections from that frame are filtered from the detection file.
     Using torchvision's RoI-Align each detected bounding box is translated into a 2048x4x4 numpy array.
-    If max_pool is true, the 2048x4x4 is max pooled to be 2048x1x1. The resulting array of previous steps
+    If max_pooling is true, the 2048x4x4 is max pooled to be 2048x1x1. The resulting array of previous steps
     is flattened and added to the output array in its corresponding place (determined by id of detection).
 
     Args:
@@ -380,12 +388,12 @@ def create_appearance_feature_dataset(detection_file, image_folder, batch_size, 
         image_folder -- folder where images are located (should be located within a another folder)
         batch_size -- batch size used during feature creation
         gpu_name -- name of the gpu used for feature creation
-        max_pool -- boolean whether to do max pooling for each cropped 4x4x2048 bbox so that it becomes 1x1x2048
+        max_pooling -- boolean whether to do max pooling for each cropped 4x4x2048 bbox so that it becomes 1x1x2048
 
     Returns:
-        Appearance dataset as numpy array.
+        Classification dataset as numpy array.
     """
-    print("Creating Appearance Feature Dataset...")
+    print("Creating Classification Feature Dataset...")
     # apply preprocessing needed for resnet (will be further investigated if normalization is needed or should
     # be changed to be according to dataset used for detection)
     preprocess = transforms.Compose([
@@ -401,7 +409,7 @@ def create_appearance_feature_dataset(detection_file, image_folder, batch_size, 
     # define ResNet model using modified file
     # define array that will hold output features
     resnet_model = resnet50(pretrained=True).to(gpu_name)
-    if max_pool:
+    if max_pooling:
         output_features = np.empty((len(detection_file), 2048))
     else:
         output_features = np.empty((len(detection_file), (2048 * 4 * 4)))
@@ -436,7 +444,7 @@ def create_appearance_feature_dataset(detection_file, image_folder, batch_size, 
         # apply roi_align algorithm on top of bboxes to obtain the 4x4x2048 cropped bboxes
         cropped_bboxes = ops.roi_align(feature_map, bboxes, (4, 4))
         # if pooling is wanted (iterations.e. only take highest value of each 4x4 array) then Pooling layer is applied
-        if max_pool:
+        if max_pooling:
             pool = torch.nn.MaxPool3d((1, 4, 4))
             cropped_bboxes = pool(cropped_bboxes)
         # flatten each cropped bbox and assign it to its position in the output features array
@@ -449,7 +457,7 @@ def create_appearance_feature_dataset(detection_file, image_folder, batch_size, 
 
 def create_person_feature_dataset(detection_file, image_folder, batch_size, image_dimensions, gpu_name, max_pool):
     """
-    Same as appearance feature creation just that we are employing a detector which is specifically suited for
+    Same as classification feature creation just that we are employing a detector which is specifically suited for
     identifying persons instead of a ResNet50.
     Source: https://github.com/WangWenhao0716/Adapted-Center-and-Scale-Prediction
 
@@ -459,7 +467,7 @@ def create_person_feature_dataset(detection_file, image_folder, batch_size, imag
         batch_size -- batch size used during feature creation
         image_dimensions -- initial image dimensions of the input images
         gpu_name -- name of the gpu used for feature creation
-        max_pool -- boolean whether to do max pooling for each cropped 4x4x2048 bbox so that it becomes 1x1x2048
+        max_pooling -- boolean whether to do max pooling for each cropped 4x4x2048 bbox so that it becomes 1x1x2048
 
     Returns:
         Person feature dataset as numpy array.
@@ -538,7 +546,7 @@ def create_person_feature_dataset(detection_file, image_folder, batch_size, imag
 
 def create_reid_feature_dataset(detection_file, image_folder, batch_size, gpu_name, max_pool):
     """
-    Same as appearance function just that we are employing a detector which is specifically suited for identifying
+    Same as classification function just that we are employing a detector which is specifically suited for identifying
     persons instead of a ResNet50. Currently set to be the normal ResNet-50.
     Source: https://github.com/layumi/Person_reID_baseline_pytorch
 
@@ -547,7 +555,7 @@ def create_reid_feature_dataset(detection_file, image_folder, batch_size, gpu_na
         image_folder -- folder where images are located (should be located within a another folder)
         batch_size -- batch size used during feature creation
         gpu_name -- name of the gpu used for feature creation
-        max_pool -- boolean whether to do max pooling for each cropped 4x4x2048 bbox so that it becomes 1x1x2048
+        max_pooling -- boolean whether to do max pooling for each cropped 4x4x2048 bbox so that it becomes 1x1x2048
 
     Returns:
         Reidentification feature dataset as numpy array.
@@ -685,7 +693,7 @@ def create_autocorrelation_dataset(dataset):
     return np.concatenate((dataset, autocorrelate_df), axis=1)
 
 
-def create_knn_graph_dataset(knn_type, features_file, neighbors, knn_calculation, knn_metric='minkowski',
+def create_knn_graph_dataset(knn_type, features_file, neighbors, knn_calculation, frames, knn_metric='minkowski',
                              frame_dist_forward=0, frame_dist_backward=0, filter_dataset=None):
     """
     Function that creates a knn-graph file according to the input format of the GCN paper. knn_types that are currently
@@ -711,42 +719,44 @@ def create_knn_graph_dataset(knn_type, features_file, neighbors, knn_calculation
         # create empty output array
         output_knn_graph = np.empty([features_file.shape[0], neighbors + 1])
         # append index to feature array for reconstruction
-        features_index = np.empty((features_file.shape[0], features_file.shape[1] + 1), dtype=int)
-        features_index[:, 0] = np.arange(features_file.shape[0])
-        features_index[:, 1:] = features_file
+        features_index = np.empty((features_file.shape[0], features_file.shape[1] + 2), dtype=int)
+        features_index[:, 0] = frames
+        features_index[:, 1] = np.arange(features_file.shape[0])
+        features_index[:, 2:] = features_file
         # go through features of each detection
         for i in range(features_file.shape[0]):
             # get index of currently observed detection
-            feat_idx = features_index[features_index[:, 0] == i][0]
+            feat_idx = features_index[features_index[:, 1] == i][0]
             # get frame of current observed detection
-            frame_idx = feat_idx[5]
+            frame_idx = feat_idx[0]
             # reset frame distance values to original one
             frame_dist_fw = frame_dist_forward
             frame_dist_bw = frame_dist_backward
             # filter feature file according to frame distance values, i.e. detections only within the distance
-            knn_feat = features_index[features_index[:, 5] <= frame_idx + frame_dist_fw]
-            knn_feat = knn_feat[knn_feat[:, 5] >= frame_idx - frame_dist_bw]
+            knn_feat = features_index[features_index[:, 0] <= frame_idx + frame_dist_fw]
+            knn_feat = knn_feat[knn_feat[:, 0] >= frame_idx - frame_dist_bw]
             # if there are not enough detections meeting that condition iteratively increase frame distance until
             # there are enough detections, i.e. neighbors + 1 detections
             while len(knn_feat) < neighbors + 1:
-                knn_feat = features_index[features_index[:, 5] <= frame_idx + frame_dist_fw]
-                knn_feat = knn_feat[knn_feat[:, 5] >= frame_idx - frame_dist_bw]
+                knn_feat = features_index[features_index[:, 0] <= frame_idx + frame_dist_fw]
+                knn_feat = knn_feat[knn_feat[:, 0] >= frame_idx - frame_dist_bw]
                 frame_dist_fw += 1
                 frame_dist_bw += 1
             # obtain sorted knn of filtered data and save ordering to output knn file
-            neighbor_idx = get_neighbors(knn_feat, feat_idx[1:], neighbors + 1, knn_metric)
-            output_knn_graph[feat_idx[0], :] = neighbor_idx
+            neighbor_idx = get_neighbors(knn_feat[:, 1:], feat_idx[2:], neighbors + 1, knn_metric)
+            output_knn_graph[feat_idx[1], :] = neighbor_idx
             # print progress
             if i % 1000 == 0 or i + 1 == features_file.shape[0]:
-                print('Processed: ' + str(feat_idx[0]) + '/' + str(features_file.shape[0]))
+                print('Processed: ' + str(feat_idx[1]) + '/' + str(features_file.shape[0]))
     elif knn_type == 'pre_filtered_frame_distance':
         print("Creating Pre-Filtered Frame Distance KNN Graph Dataset...")
         # create empty output array
         output_knn_graph = np.empty([features_file.shape[0], neighbors + 1])
         # append index to feature array for reconstruction
-        features_index = np.empty((features_file.shape[0], features_file.shape[1] + 1), dtype=int)
-        features_index[:, 0] = np.arange(features_file.shape[0])
-        features_index[:, 1:] = features_file
+        features_index = np.empty((features_file.shape[0], features_file.shape[1] + 2), dtype=int)
+        features_index[:, 0] = frames
+        features_index[:, 1] = np.arange(features_file.shape[0])
+        features_index[:, 2:] = features_file
         # obtain 500 knn of each detection according to filter dataset
         filter_knn = create_knn_graph_dataset('normal', filter_dataset, 500, knn_calculation, knn_metric)
         # go through features of each detection
@@ -754,28 +764,28 @@ def create_knn_graph_dataset(knn_type, features_file, neighbors, knn_calculation
             # obtain 500 nearest neighbors' features of current detection
             fil_knn_feat = features_index[filter_knn[i, :]]
             # get index of currently observed detection
-            feat_idx = fil_knn_feat[fil_knn_feat[:, 0] == i][0]
+            feat_idx = fil_knn_feat[fil_knn_feat[:, 1] == i][0]
             # get frame number of currently observed detection
-            frame_idx = feat_idx[5]
+            frame_idx = feat_idx[0]
             # reset frame distance values to original one
             frame_dist_fw = frame_dist_forward
             frame_dist_bw = frame_dist_backward
             # filter 500 nearest neighbors according to frame distance criterion
-            knn_feat = fil_knn_feat[fil_knn_feat[:, 5] <= frame_idx + frame_dist_fw]
-            knn_feat = knn_feat[knn_feat[:, 5] >= frame_idx - frame_dist_bw]
+            knn_feat = fil_knn_feat[fil_knn_feat[:, 0] <= frame_idx + frame_dist_fw]
+            knn_feat = knn_feat[knn_feat[:, 0] >= frame_idx - frame_dist_bw]
             # if there are not enough detections left after filtering, i.e. less than neighbors + 1, iteratively
             # increase frame distance criterion until there are enough detections
             while len(knn_feat) < neighbors + 1:
-                knn_feat = fil_knn_feat[fil_knn_feat[:, 5] <= frame_idx + frame_dist_fw]
-                knn_feat = knn_feat[knn_feat[:, 5] >= frame_idx - frame_dist_bw]
+                knn_feat = fil_knn_feat[fil_knn_feat[:, 0] <= frame_idx + frame_dist_fw]
+                knn_feat = knn_feat[knn_feat[:, 0] >= frame_idx - frame_dist_bw]
                 frame_dist_fw += 1
                 frame_dist_bw += 1
             # obtain sorted knn of filtered data and save ordering to output knn file
-            neighbor_idx = get_neighbors(knn_feat, feat_idx[1:], neighbors + 1, knn_metric)
-            output_knn_graph[feat_idx[0], :] = neighbor_idx
+            neighbor_idx = get_neighbors(knn_feat[:, 1:], feat_idx[2:], neighbors + 1, knn_metric)
+            output_knn_graph[feat_idx[1], :] = neighbor_idx
             # print progression
             if i % 1000 == 0 or i + 1 == features_file.shape[0]:
-                print('Processed: ' + str(feat_idx[0]) + '/' + str(features_file.shape[0]))
+                print('Processed: ' + str(feat_idx[1]) + '/' + str(features_file.shape[0]))
     else:
         print("Creating KNN Graph Dataset...")
         # create output array which is of size (no. detections, no. neighbors + 1)
@@ -998,11 +1008,12 @@ def check_labeling(gt_file, metadata_file):
                    rounded_metadata.iloc[i]['gt_x1'] + rounded_metadata.iloc[i]['gt_w'],
                    rounded_metadata.iloc[i]['gt_y1'] + rounded_metadata.iloc[i]['gt_h']]
         # check for unassigned bboxes iterations.e. coordinates all -1, iou equal to 0 and label equal to -1
-        if gt_bbox_cord == [-1, -1, -1, -1] or rounded_metadata.iloc[i]['iou'] == 0 or rounded_metadata.iloc[i]['gt_labels'] == -1:
+        if gt_bbox_cord == [-1, -1, -1, -1] or rounded_metadata.iloc[i]['iou'] == 0 or rounded_metadata.iloc[i][
+            'gt_labels'] == -1:
             # check if all three conditions are met; if not notify user about which one violated
             if gt_bbox_cord != [-1, -1, -1, -1]:
                 print("Non assigned detection in row " + str(i) + " is falsely assigned coordinates")
-            if rounded_metadata.iloc[i]['iou'] != 0:
+            if rounded_metadata.iloc[i]['iou'] > 0:
                 print("Non assigned detection in row " + str(i) + " is falsely assigned iou above 0")
             if rounded_metadata.iloc[i]['gt_labels'] != -1:
                 print("Non assigned detection in row " + str(i) + " is falsely assigned a label")
@@ -1016,10 +1027,8 @@ def check_labeling(gt_file, metadata_file):
                 # check if corresponding bbox in gt file has same label; if not notify user
                 if gt_labels[gt_idx] != rounded_metadata.loc[i]['gt_labels']:
                     print("GT BBox label in row " + str(i) + " differs")
-                if rounded_metadata.loc[i]['is_background']:
-                    rounded_metadata.loc[i]['gt_labels']
                 # check if iou between det bbox and gt bbox can be reproduced; if not notify user
-                if np.round(iou(det_bbox, gt_bbox), 3) != rounded_metadata.iloc[i]['iou']:
+                if np.round(misc.iou(det_bbox, gt_bbox), 3) != rounded_metadata.iloc[i]['iou']:
                     print('IoU differ in row ' + str(i))
             except ValueError:
                 print("GT BBox in row " + str(i) + " not in GT file")
@@ -1027,7 +1036,7 @@ def check_labeling(gt_file, metadata_file):
             print("Detection processed: " + str(i) + "/" + str(num_lines_det))
 
 
-def check_splits(metadata_file, ground_truth_file):
+def check_splits(ground_truth_file, metadata_file):
     """
     Function that checks whether the splitting is consistent. That is it is checked whether:
         - Labeling is consistent with IoU and background labeling is consistent with chosen method
@@ -1043,17 +1052,17 @@ def check_splits(metadata_file, ground_truth_file):
 
     for i in range(len(metadata_file)):
         for label_col in label_cols:
-            iou_upper = label_col.split("_")[-2]
-            iou_lower = label_col.split("_")[-1]
+            iou_upper = float(label_col.split("_")[-2])
+            iou_lower = float(label_col.split("_")[-1])
             bg_handling = metadata_file.iloc[i]['background_handling']
 
             # check class detections
-            if metadata_file.iloc[i]['is_class']:
+            if metadata_file.iloc[i]['is_class_' + str(iou_upper) + '_' + str(iou_lower)]:
                 if metadata_file.iloc[i]['iou'] <= iou_upper:
                     print("IoU does not satisfy is_class threshold in column row " + str(i))
 
             # check background detections
-            if metadata_file.iloc[i]['is_background']:
+            if metadata_file.iloc[i]['is_background_' + str(iou_upper) + '_' + str(iou_lower)]:
                 # check cluster background labeling
                 if bg_handling == "clusters":
                     # if label is not 0 notify user
@@ -1068,47 +1077,49 @@ def check_splits(metadata_file, ground_truth_file):
                     print("IoU does not satisfy is_background threshold in column row " + str(i))
 
             # check excluded detections
-            if metadata_file.iloc[i]['is_excluded']:
-                if metadata_file.iloc[i]['iou'] > iou_upper or metadata_file.iloc[i]['iou'] < iou_lower:
-                    print("IoU does not satisfy is_excluded threshold in column row " + str(i))
+            if metadata_file.iloc[i]['is_nothing_' + str(iou_upper) + '_' + str(iou_lower)]:
+                if metadata_file.iloc[i]['iou'] > iou_upper or 0 < metadata_file.iloc[i]['iou'] < iou_lower:
+                    print("IoU does not satisfy is_nothing threshold in column row " + str(i))
 
             # check consistency of class/ background/ excluded splits
-            # if more than one of the is_class, is_background and is_excluded column is true, then the user is notified
-            if int(metadata_file.iloc[i]['is_class']) + int(metadata_file.iloc[i]['is_background']) + int(
-                    metadata_file.iloc[i]['is_excluded']) > 1:
-                print("Row " + str(i) + "is included in more than one split (class/ background/ excluded)!")
-            # if none of the is_class, is_background and is_excluded column is true, then the user is notified
-            if int(metadata_file.iloc[i]['is_class']) + int(metadata_file.iloc[i]['is_background']) + int(
-                    metadata_file.iloc[i]['is_excluded']) == 0:
-                print("Row " + str(i) + "is included in no split (class/ background/ excluded)!")
+            # if more than one of the is_class, is_background and is_nothing column is true, then the user is notified
+            if (int(metadata_file.iloc[i]['is_class_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_background_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_nothing_' + str(iou_upper) + '_' + str(iou_lower)])) > 1:
+                print("Row " + str(i) + " is included in more than one split (class/ background/ excluded)!")
+            # if none of the is_class, is_background and is_nothing column is true, then the user is notified
+            if (int(metadata_file.iloc[i]['is_class_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_background_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_nothing_' + str(iou_upper) + '_' + str(iou_lower)])) == 0:
+                print("Row " + str(i) + " is included in no split (class/ background/ excluded)!")
 
         # check two-way and three-way splits
         for two_split in two_splits:
-            iou_upper = two_split.split("_")[-2]
-            iou_lower = two_split.split("_")[-1]
+            iou_upper = float(two_split.split("_")[-2])
+            iou_lower = float(two_split.split("_")[-1])
             # if more than one of the split filter arrays is true, then the user is notified
-            if int(metadata_file.iloc[i]['is_train_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) + \
-                    int(metadata_file.iloc[i]['is_valid_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) > 1:
+            if (int(metadata_file.iloc[i]['is_train_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_valid_two_split_' + str(iou_upper) + '_' + str(iou_lower)])) > 1:
                 print("Row " + str(i) + "is included in more than one split (" + str(iou_upper) + "_" + str(iou_lower) +
                       ") (train/ valid)!")
             # if none of the split filter arrays is true, then the user is notified
-            if int(metadata_file.iloc[i]['is_train_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) + \
-                    int(metadata_file.iloc[i]['is_valid_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) == 0:
+            if (int(metadata_file.iloc[i]['is_train_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_valid_two_split_' + str(iou_upper) + '_' + str(iou_lower)])) == 0:
                 print("Row " + str(i) + "is included in no split (" + str(iou_upper) + "_" + str(iou_lower) +
                       ") (train/ valid)!")
         for three_split in three_splits:
-            iou_upper = three_split.split("_")[-2]
-            iou_lower = three_split.split("_")[-1]
+            iou_upper = float(three_split.split("_")[-2])
+            iou_lower = float(three_split.split("_")[-1])
             # if more than one of the split filter arrays is true, then the user is notified
-            if int(metadata_file.iloc[i]['is_train_three_split_' + str(iou_upper) + '_' + str(iou_lower)]) + \
-                    int(metadata_file.iloc[i]['is_valid_three_split_' + str(iou_upper) + '_' + str(iou_lower)]) + \
-                    int(metadata_file.iloc[i]['is_test_three_split_' + str(iou_upper) + '_' + str(iou_lower)]) > 1:
+            if (int(metadata_file.iloc[i]['is_train_three_split_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_valid_three_split_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_test_three_split_' + str(iou_upper) + '_' + str(iou_lower)])) > 1:
                 print("Row " + str(i) + "is included in more than one split (" + str(iou_upper) + "_" + str(iou_lower) +
                       ") (train/ valid/ test)!")
             # if none of the split filter arrays is true, then the user is notified
-            if int(metadata_file.iloc[i]['is_train_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) + \
-                    int(metadata_file.iloc[i]['is_valid_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) + \
-                    int(metadata_file.iloc[i]['is_valid_three_split_' + str(iou_upper) + '_' + str(iou_lower)]) == 0:
+            if (int(metadata_file.iloc[i]['is_train_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_valid_two_split_' + str(iou_upper) + '_' + str(iou_lower)]) +
+                int(metadata_file.iloc[i]['is_valid_three_split_' + str(iou_upper) + '_' + str(iou_lower)])) == 0:
                 print("Row " + str(i) + "is included in no split (" + str(iou_upper) + "_" + str(iou_lower) +
                       ") (train/ valid/ test)!")
 
@@ -1139,13 +1150,13 @@ def check_metadata_file(det_file, mod_det_file, gt_file, metadata_file):
     print("PERFORMING DATA CONSISTENCY CHECKS ON CONSTRUCTED METADATA FILE")
     check_metadata_file_length(mod_det_file, metadata_file)
     check_detections(mod_det_file, metadata_file)
-    check_labeling(metadata_file, gt_file)
-    check_splits(metadata_file, gt_file)
+    check_labeling(gt_file, metadata_file)
+    check_splits(gt_file, metadata_file)
     print("DONE CHECKING METADATA FILE")
 
 
-def create_label_files(data_directory, sequence, detection_file_path, ground_truth_path, background_handling,
-                       iou_ranges_list, iou_split_list, split_ratio_three_way, split_ratio_two_way, ):
+def create_label_files(detection_directory, gt_directory, sequence, detection_file_path, ground_truth_path,
+                       background_handling, iou_ranges_list, iou_split_list, split_ratio_three_way, split_ratio_two_way):
     """
     Function that creates the labeling for a sequence a as well as a train-valid and train-valid-test split
     according to split criteria. Saves resulting metadata (unique name with timestamp) in sequence folder.
@@ -1165,11 +1176,11 @@ def create_label_files(data_directory, sequence, detection_file_path, ground_tru
     print('Creating Labeling for ' + sequence + '...')
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     # load detection and ground truth file
-    det_file_mot = np.loadtxt(os.path.join(data_directory, sequence, detection_file_path), delimiter=",")
-    gt_file_mot = np.loadtxt(os.path.join(data_directory, sequence, ground_truth_path), delimiter=",")
+    det_file_mot = np.loadtxt(os.path.join(detection_directory, sequence, detection_file_path), delimiter=",")
+    gt_file_mot = np.loadtxt(os.path.join(gt_directory, sequence, ground_truth_path), delimiter=",")
 
     # folder where output is saved to
-    output_folder = os.path.join(data_directory, sequence)
+    output_folder = os.path.join(detection_directory, sequence)
 
     # create modified detection file and initialise metadata file
     mod_det_file_mot = create_modified_detection_file(detection_file=det_file_mot)
@@ -1179,79 +1190,85 @@ def create_label_files(data_directory, sequence, detection_file_path, ground_tru
     meta_data_mot = create_label_dataset(detection_file=mod_det_file_mot,
                                          ground_truth_file=gt_file_mot,
                                          metadata_file=meta_data_mot,
-                                         iou_ranges=iou_ranges_list,
+                                         iou_ranges_list=iou_ranges_list,
                                          background_handling=background_handling
                                          )
     # create splits for each iou split pair
     for iou_split in iou_split_list:
+        print('CREATING SPLITS FOR IOU ' + str(iou_split))
         # create train and valid and extend metadata file with filter arrays
+        print('\nTWO SPLIT')
         meta_data_mot = create_two_split(metadata_file=meta_data_mot,
                                          split_ratio=split_ratio_two_way,
                                          split_iou=iou_split,
                                          )
         # create train valid and test split and extend metadata file with filter arrays
+        print('\nTHREE SPLIT')
         meta_data_mot = create_three_split(metadata_file=meta_data_mot,
                                            split_ratio=split_ratio_three_way,
                                            split_iou=iou_split
                                            )
+    # perform data consistency checks
+    check_metadata_file(det_file_mot, mod_det_file_mot, gt_file_mot, meta_data_mot)
     # save metadata file with log_timestamp
     meta_data_mot.to_csv(os.path.join(output_folder, timestamp + "_metadata.csv"), index=False,
                          float_format='%g')
-    # perform data consistency checks
-    check_metadata_file(det_file_mot, mod_det_file_mot, gt_file_mot, meta_data_mot)
 
 
-def create_feature_files(data_directory, sequence, detection_file_path, image_path, img_dim, batch_size,
-                         gpu_name, max_pool_feat):
+def create_feature_files(detection_directory, img_directory, sequence, detection_file_path, image_path,
+                         img_dim, batch_size, gpu_name, max_pooling):
     """
     Function that creates feature file for specific sequence and saves feature datasets in sequence folder.
 
     Args:
-        data_directory -- directory where sequence folder is located in
+        detection_directory -- directory detection files are located in
+        img_directory -- directory where image files are located in
         sequence -- name of sequence
         detection_file_path -- path to detection file within sequence folder
         image_path -- path to image folder within sequence folder
         img_dim -- dimensions of input images
         batch_size -- batch_size employed during feature creation
         gpu_name -- gpu used during feature creation
-        max_pool_feat -- boolean whether to max_pool or not after bbox extraction
+        max_pooling -- boolean whether to max_pooling or not after bbox extraction
     """
     print('Creating Feature Files for ' + sequence + '...')
     # load detection and ground truth file
-    det_file = np.loadtxt(os.path.join(data_directory, sequence, detection_file_path), delimiter=",")
+    det_file = np.loadtxt(os.path.join(detection_directory, sequence, detection_file_path), delimiter=",")
     # Folder variables
-    output_folder = os.path.join(data_directory, sequence)
-    img_folder = os.path.join(data_directory, sequence, image_path)
+    output_folder = os.path.join(detection_directory, sequence)
+    img_folder = os.path.join(img_directory, sequence, image_path)
 
     # create modified detection file and initialise metadata file
     mod_det_file = create_modified_detection_file(detection_file=det_file)
 
     # create spatial, reid and person feature datasets
     spatial_feat = create_spatial_feature_dataset(mod_det_file)
-    reid_feat = create_reid_feature_dataset(mod_det_file, img_folder, batch_size, gpu_name, max_pool_feat)
-    person_feat = create_person_feature_dataset(mod_det_file, img_folder, batch_size, img_dim, gpu_name, max_pool_feat)
-    appearance_feat = create_appearance_feature_dataset(mod_det_file, img_folder, batch_size, gpu_name, max_pool_feat)
+    reid_feat = create_reid_feature_dataset(mod_det_file, img_folder, batch_size, gpu_name, max_pooling)
+    person_feat = create_person_feature_dataset(mod_det_file, img_folder, batch_size, img_dim, gpu_name, max_pooling)
+    clf_feat = create_classification_feature_dataset(mod_det_file, img_folder, batch_size, gpu_name, max_pooling)
     extra_feat = create_extra_feature_dataset(mod_det_file)
 
     # save feature datasets
     np.save(os.path.join(output_folder, "feat_spa.npy"), spatial_feat)
     np.save(os.path.join(output_folder, "feat_reid.npy"), reid_feat)
     np.save(os.path.join(output_folder, "feat_person.npy"), person_feat)
-    np.save(os.path.join(output_folder, "feat_app.npy"), appearance_feat)
+    np.save(os.path.join(output_folder, "feat_clf.npy"), clf_feat)
     np.save(os.path.join(output_folder, "feat_extra.npy"), extra_feat)
-
 
 
 if __name__ == '__main__':
     data_dir = 'data/MOT/MOT17'
+    det_dir = 'data/MOT/MOT17_mod'
+    gt_dir = 'data/MOT/MOT17'
+    img_dir = 'data/MOT/MOT17'
     det_path = 'det/det.txt'
     gt_path = 'gt/gt.txt'
     img_path = 'img'
     gpu = 'cuda:2'
     max_pool = True
     iou_ranges = [[0.7, 0.3], [0.5, 0.3]]
-    iou_splits = [[0.7, 0.3], [0.5, 0.3]],
-    split_ratio_2w = [0.8, 0.2],
+    iou_splits = [[0.7, 0.3], [0.5, 0.3]]
+    split_ratio_2w = [0.8, 0.2]
     split_ratio_3w = [0.8, 0.1, 0.1]
     bg_handling = 'clusters'
 
@@ -1281,7 +1298,8 @@ if __name__ == '__main__':
     # loop through all training sequences
     for train_det in train_dets:
         # create labeling for train sequence
-        create_label_files(data_directory=os.path.join(data_dir, 'train'),
+        create_label_files(detection_directory=os.path.join(det_dir, 'train'),
+                           gt_directory=os.path.join(gt_dir, 'train'),
                            sequence=train_det[0],
                            detection_file_path=det_path,
                            ground_truth_path=gt_path,
@@ -1292,27 +1310,29 @@ if __name__ == '__main__':
                            split_ratio_three_way=split_ratio_3w
                            )
         # create feature files for train sequence
-        create_feature_files(data_directory=os.path.join(data_dir, 'train'),
+        create_feature_files(detection_directory=os.path.join(det_dir, 'train'),
+                             img_directory=os.path.join(img_dir, 'train'),
                              sequence=train_det[0],
                              detection_file_path=det_path,
                              image_path=img_path,
                              img_dim=train_det[1],
                              batch_size=1,
                              gpu_name=gpu,
-                             max_pool_feat=max_pool
+                             max_pooling=max_pool
                              )
 
     # loop through all testing sequences
     for test_det in test_dets:
         # create feature datasets for test sequence
-        create_feature_files(data_directory=os.path.join(data_dir, 'test'),
+        create_feature_files(detection_directory=os.path.join(det_dir, 'test'),
+                             img_directory=os.path.join(img_dir, 'test'),
                              sequence=test_det[0],
                              detection_file_path=det_path,
                              image_path=img_path,
                              img_dim=test_det[1],
                              batch_size=1,
                              gpu_name=gpu,
-                             max_pool_feat=max_pool
+                             max_pooling=max_pool
                              )
 
     # calculate time data creation took
