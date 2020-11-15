@@ -1,15 +1,12 @@
 import os
 import sys
-
 import json
-
 import moviepy.video.io.ImageSequenceClip
-
-from evaluation.evaluateTracking_modified import evaluateTracking
-from gcn_clustering.utils.logging import Logger
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from evaluation.evaluateTracking_modified import evaluateTracking
+from gcn_clustering.utils.logging import Logger
 from gcn_clustering.utils.osutils import mkdir_if_missing
 from misc import split
 
@@ -17,21 +14,18 @@ pd.set_option("display.max_columns", None)
 pd.set_option("display.max_rows", None)
 
 
-def evaluate_tracking(evaluation_runs, removed_instances, is_split, log_files_path, data_path,
-                      sequence_maps, detectors):
+def evaluate_tracking(eval_runs, removed_instances, is_split, log_files_path, data_path, sequence_maps, detectors):
     """
     Function that evaluates tracking results using the official MOT Metrics (using py-motmetrics). It evaluates
     per Run and if removed_instances is True also evaluates the prediction files where singleton clusters are removed.
-    If is_split is set to True, then a modified version of the ground truth file is used for evaluation.
 
     Args:
         evaluation_runs -- number of runs that are to be evaluated
-        evaluation_type -- type of evaluation i.e. full sequences (normal) or split sequences (split)
         removed_instances -- boolean whether to calculate evaluation metrics for singleton removal scenario
-        is_split -- boolean indicating whether a split was used during training
+        is_split -- boolean indicating that modified version of GT is to be used (because of split)
         log_files_path -- path to where log files of run(s) to be evaluated are stored
         data_path -- path to where data is located that was used during prediction
-        sequence_map_path -- path to sequence map to use for evaluation (see evaluation/seqmaps for examples)
+        sequence_maps -- list of sequence maps to use for evaluation (see evaluation/seqmaps for examples)
         detectors -- list of detector names to evaluate (e.g. MOT17-02-DPM)
 
     Returns:
@@ -49,7 +43,7 @@ def evaluate_tracking(evaluation_runs, removed_instances, is_split, log_files_pa
             eval_data[detector + '_mota_rm'] = 0.0
             eval_data[detector + '_IDS_rm'] = 0.0
     # iterate over all runs
-    for i in range(evaluation_runs):
+    for i in range(eval_runs):
         print('RUN: ' + str(i + 1))
         # go through all seqmaps (which contain detectors to evaluate)
         for seqmap in sequence_maps:
@@ -81,13 +75,13 @@ def create_plots(log_directory_path, eval_file, train_epochs, train_detector_nam
     """
     Function that creates plots used to analyse overfitting. Saves the plots into a plot folder wihtin the log
     directory. Creates:
-        - train loss curves (batch-wise and average) for all epochs (concatenated curve)
-        - validation loss curves (batch-wise and average)
-        - validation loss vs. MOTA (IDS)
-        - train loss vs MOTA (IDS)
-        - train loss divided by validation loss vs. MOTA (IDS)
-        - validation loss training vs MOTA (IDS)
-        - training normal and training validation loss curves (combined in one plot; per epoch concatenated)
+        - Average and batch-wise training and validation losses across epochs.
+        - Average validation loss of each sequence (x-axis) compared to the MOTA score of said sequence (y-axis)
+        - Average loss on the validation set of the training data (x-axis) compared against the MOTA score of each
+          validation sequence (y-axis).
+        - Average training loss (x-axis) compared against the MOTA score of each validation sequence (y-axis).
+        - Average loss on the validation set of the training data sequence divided by the average training loss (x-axis)
+          against the MOTA score of each validation sequence (y-axis).
 
     Args:
         log_directory_path -- directory where log files of experiment are located
@@ -141,6 +135,19 @@ def create_plots(log_directory_path, eval_file, train_epochs, train_detector_nam
         plt.savefig(os.path.join(log_directory_path, 'plots', 'loss_curves', 'val_loss_' + detector + '.png'))
         plt.close()
 
+    # create average validation loss curves
+    for detector in train_detector_names + val_detector_names:
+        for index, run in eval_file.iterrows():
+            val_loss = json.loads(run[detector + '_avg_loss'])
+            plt.plot(val_loss)
+            plt.ylabel('average validation loss')
+            plt.xlabel('batch number')
+            plt.ylim((min(val_loss) - (min(val_loss) / 2), max(val_loss) + (max(val_loss) / 2)))
+            plt.title('average validation loss ' + detector)
+        plt.legend(eval_file.index.tolist())
+        plt.savefig(os.path.join(log_directory_path, 'plots', 'loss_curves', 'avg_val_loss_' + detector + '.png'))
+        plt.close()
+
     # create loss plots (all epochs + val loss after each epoch)
     for detector in detector_types:
         min_loss = 99999999999.9
@@ -186,245 +193,181 @@ def create_plots(log_directory_path, eval_file, train_epochs, train_detector_nam
 
         plt.close()
 
-    # create average validation loss curves
-    for detector in train_detector_names + val_detector_names:
-        for index, run in eval_file.iterrows():
-            val_loss = json.loads(run[detector + '_avg_loss'])
-            plt.plot(val_loss)
-            plt.ylabel('average validation loss')
-            plt.xlabel('batch number')
-            plt.ylim((min(val_loss) - (min(val_loss) / 2), max(val_loss) + (max(val_loss) / 2)))
-            plt.title('average validation loss ' + detector)
-        plt.legend(eval_file.index.tolist())
-        plt.savefig(os.path.join(log_directory_path, 'plots', 'loss_curves', 'avg_val_loss_' + detector + '.png'))
-        plt.close()
-
     """
-    OVERFITTING ANALYSIS (MOTA)
+    OVERFITTING ANALYSIS
     """
     # iterate over all validation detectors
     for val_detector in val_detector_names:
-        # combine three plots to one plot with the subplots being next to each other
-        fig, axs = plt.subplots(1, 3)
-        fig.set_size_inches(30, 10)
-        plt.title(val_detector)
-        plt.autoscale()
-        # Create Validation loss vs. MOTA
+        for train_detector in train_detector_names:
+            train_val_loss_avg = []
+            train_loss_avg = []
+            val_loss_avg = []
+            train_div_train_val_loss_avg = []
+            for detector_type in detector_types:
+                if detector_type in val_detector:
+                    # if combined setting use loss of final GCN
+                    if experiment_type == 'single':
+                        loss_column = [col for col in eval_file.columns if
+                                       'train' in col and detector_type in col and not 'avg' in col]
+                    else:
+                        loss_column = [col for col in eval_file.columns if
+                                       'train' in col and detector_type in col and 'final' in col and not 'avg' in col]
+                    for index, run in eval_file.iterrows():
+                        train_loss = json.loads(run[loss_column][0])[-1]
+                        train_val_loss = json.loads(run[train_detector + '_loss'])
+                        val_loss = json.loads(run[val_detector + '_loss'])
+                        # create final value by taking average of last two train/ validation loss values
+                        train_loss_avg.append((train_loss[-2] + train_loss[-1]) / 2)
+                        train_val_loss_avg.append((train_val_loss[-2] + train_val_loss[-1]) / 2)
+                        val_loss_avg.append((val_loss[-2] + val_loss[-1]) / 2)
+                        # create final value by taking average of last two train and validation loss values
+                        # and dividing averages
+                        train_div_train_val_loss_avg.append(
+                            ((train_loss[-2] + train_loss[-1]) / 2) / (train_val_loss[-2] + train_val_loss[-1]) / 2)
+                    mota = eval_file[val_detector + '_mota'].tolist()
+                    ids = eval_file[val_detector + '_IDS'].tolist()
+
+                    ### MOTA ###
+
+                    # combine three plots to one plot with the subplots being next to each other
+                    fig, axs = plt.subplots(1, 3)
+                    fig.set_size_inches(30, 10)
+                    plt.title(val_detector)
+                    plt.autoscale()
+
+                    # VAL LOSS TRAINING VS MOTA VAL SEQUENCES
+                    # create list of pairs which resemble points for each run within the scatter plot
+                    combined = [list(a) for a in zip(train_val_loss_avg, mota)]
+                    for pair in combined:
+                        axs[0].scatter(pair[0], pair[1])
+                    axs[0].set_title('Training Validation Loss vs. MOTA Validation Sequences')
+                    axs[0].set_xlabel('Val Loss ' + train_detector)
+                    axs[0].set_ylabel('MOTA ' + val_detector)
+                    axs[0].legend(eval_file.index.tolist(), prop={'size': 15})
+                    axs[0].set_xlim((min(val_loss_avg) - (min(val_loss_avg) / 4), max(val_loss_avg) + (max(val_loss_avg) / 4)))
+                    axs[0].set_ylim((min(mota) - (min(mota) / 32), max(mota) + (max(mota) / 32)))
+
+                    # TRAIN LOSS VS MOTA VAL SEQUENCES
+                    # create list of pairs which resemble points for each run within the scatter plot
+                    combined = [list(a) for a in zip(train_loss_avg, mota)]
+                    for pair in combined:
+                        axs[1].scatter(pair[0], pair[1])
+                    axs[1].set_title('Average Train Loss vs. MOTA Validation Sequences')
+                    axs[1].set_xlabel('Train Loss')
+                    axs[1].set_ylabel('MOTA ' + val_detector)
+                    axs[1].legend(eval_file.index.tolist(), prop={'size': 15})
+                    axs[1].set_xlim(
+                        (min(train_loss_avg) - (min(train_loss_avg) / 4), max(train_loss_avg) + (max(train_loss_avg) / 4)))
+                    axs[1].set_ylim((min(mota) - (min(mota) / 32), max(mota) + (max(mota) / 32)))
+
+                    # TRAIN LOSS / VAL LOSS VS MOTA VAL SEQUENCES
+                    # create list of pairs which resemble points for each run within the scatter plot
+                    combined = [list(a) for a in zip(train_val_loss_avg, mota)]
+                    for pair in combined:
+                        axs[2].scatter(pair[0], pair[1])
+                    axs[2].legend(eval_file.index.tolist(), prop={'size': 15})
+                    axs[2].set_title('train loss / val loss vs. MOTA')
+                    axs[2].set_xlabel('train loss / val loss')
+                    axs[2].set_ylabel('MOTA')
+                    axs[2].set_xlim((min(train_val_loss_avg) - (min(train_val_loss_avg) / 4),
+                                     max(train_val_loss_avg) + (max(train_val_loss_avg) / 4)))
+                    axs[2].set_ylim((min(mota) - (min(mota) / 32), max(mota) + (max(mota) / 32)))
+
+                    plt.savefig(os.path.join(log_directory_path, 'plots', 'MOTA', val_detector + '.png'))
+                    plt.close()
+
+                    ### IDS ###
+
+                    # combine three plots to one plot with the subplots being next to each other
+                    fig, axs = plt.subplots(1, 3)
+                    fig.set_size_inches(30, 10)
+                    plt.title(val_detector)
+                    plt.autoscale()
+
+                    # VAL LOSS TRAINING VS IDS VAL SEQUENCES
+                    # create list of pairs which resemble points for each run within the scatter plot
+                    combined = [list(a) for a in zip(train_val_loss_avg, ids)]
+                    for pair in combined:
+                        axs[0].scatter(pair[0], pair[1])
+                    axs[0].set_title('Training Validation Loss vs. IDS Validation Sequences')
+                    axs[0].set_xlabel('Val Loss ' + train_detector)
+                    axs[0].set_ylabel('IDS ' + val_detector)
+                    axs[0].legend(eval_file.index.tolist(), prop={'size': 15})
+                    axs[0].set_xlim((min(train_val_loss_avg) - (min(train_val_loss_avg) / 4),
+                                     max(train_val_loss_avg) + (max(train_val_loss_avg) / 4)))
+                    axs[0].set_ylim((min(ids) - (min(ids) / 32), max(ids) + (max(ids) / 32)))
+
+                    # TRAIN LOSS VS IDS VAL SEQUENCES
+                    # create list of pairs which resemble points for each run within the scatter plot
+                    combined = [list(a) for a in zip(train_loss_avg, ids)]
+                    for pair in combined:
+                        axs[1].scatter(pair[0], pair[1])
+                    axs[1].set_title('Average Train Loss vs. IDS Validation Sequences')
+                    axs[1].set_xlabel('Train Loss')
+                    axs[1].set_ylabel('IDS ' + val_detector)
+                    axs[1].legend(eval_file.index.tolist(), prop={'size': 15})
+                    axs[1].set_xlim((min(train_loss_avg) - (min(train_loss_avg) / 4),
+                                     max(train_loss_avg) + (max(train_loss_avg) / 4)))
+                    axs[1].set_ylim((min(ids) - (min(ids) / 32), max(ids) + (max(ids) / 32)))
+
+                    # TRAIN LOSS / VAL LOSS VS IDS VAL SEQUENCES
+                    # create list of pairs which resemble points for each run within the scatter plot
+                    combined = [list(a) for a in zip(train_div_train_val_loss_avg, ids)]
+                    for pair in combined:
+                        axs[2].scatter(pair[0], pair[1])
+                    axs[2].legend(eval_file.index.tolist(), prop={'size': 15})
+                    axs[2].set_title('train loss / val loss vs. IDS')
+                    axs[2].set_xlabel('train loss / val loss')
+                    axs[2].set_ylabel('IDS')
+                    axs[2].set_xlim((min(train_div_train_val_loss_avg) - (min(train_div_train_val_loss_avg) / 4),
+                                     max(train_div_train_val_loss_avg) + (max(train_div_train_val_loss_avg) / 4)))
+                    axs[2].set_ylim((min(ids) - (min(ids) / 32), max(ids) + (max(ids) / 32)))
+
+                    plt.savefig(os.path.join(log_directory_path, 'plots', 'IDS', val_detector + '.png'))
+                    plt.close()
+
+    # Create training validation loss vs MOTA
+    for detector in train_detector_names + val_detector_names:
         val_loss_avg = []
         for index, run in eval_file.iterrows():
-            val_loss = json.loads(run[val_detector + '_loss'])
-            # create final value by taking average of last two validation loss values
+            val_loss = json.loads(run[detector + '_loss'])
+            # create final value by taking average of last two train loss values
             val_loss_avg.append((val_loss[-2] + val_loss[-1]) / 2)
-        mota = eval_file[val_detector + '_mota'].tolist()
+        mota = eval_file[detector + '_mota'].tolist()
+        ids = eval_file[detector + '_IDS'].tolist()
+
+        ### MOTA ###
+
         # create list of pairs which resemble points for each run within the scatter plot
         combined = [list(a) for a in zip(val_loss_avg, mota)]
         for pair in combined:
-            axs[0].scatter(pair[0], pair[1])
-        axs[0].set_title('val loss vs. MOTA')
-        axs[0].set_xlabel('val_loss')
-        axs[0].set_ylabel('MOTA')
-        axs[0].legend(eval_file.index.tolist(), prop={'size': 15})
-        axs[0].set_xlim((min(val_loss_avg) - (min(val_loss_avg) / 4), max(val_loss_avg) + (max(val_loss_avg) / 4)))
-        axs[0].set_ylim((min(mota) - (min(mota) / 32), max(mota) + (max(mota) / 32)))
-
-        # train loss vs MOTA
-        train_loss_avg = []
-        for detector_type in detector_types:
-            if detector_type in val_detector:
-                # if combined setting use loss of final GCN
-                if experiment_type == 'single':
-                    loss_column = [col for col in eval_file.columns if
-                                   'train' in col and detector_type in col and not 'avg' in col]
-                else:
-                    loss_column = [col for col in eval_file.columns if
-                                   'train' in col and detector_type in col and 'final' in col and not 'avg' in col]
-                for index, run in eval_file.iterrows():
-                    train_loss = json.loads(run[loss_column][0])[-1]
-                    # create final value by taking average of last two train loss values
-                    train_loss_avg.append((train_loss[-2] + train_loss[-1]) / 2)
-        mota = eval_file[val_detector + '_mota'].tolist()
-        # create list of pairs which resemble points for each run within the scatter plot
-        combined = [list(a) for a in zip(train_loss_avg, mota)]
-        for pair in combined:
-            axs[1].scatter(pair[0], pair[1])
-        axs[1].set_title('train loss vs. MOTA')
-        axs[1].set_xlabel('train loss')
-        axs[1].set_ylabel('MOTA')
-        axs[1].legend(eval_file.index.tolist(), prop={'size': 15})
-        axs[1].set_xlim(
-            (min(train_loss_avg) - (min(train_loss_avg) / 4), max(train_loss_avg) + (max(train_loss_avg) / 4)))
-        axs[1].set_ylim((min(mota) - (min(mota) / 32), max(mota) + (max(mota) / 32)))
-
-        # Create training loss divided by validation loss vs. mota
-        train_val_loss_avg = []
-        for detector_type in detector_types:
-            if detector_type in val_detector:
-                # if combined setting use loss of final GCN
-                if experiment_type == 'single':
-                    loss_column = [col for col in eval_file.columns if
-                                   'train' in col and detector_type in col and not 'avg' in col]
-                else:
-                    loss_column = [col for col in eval_file.columns if
-                                   'train' in col and detector_type in col and 'final' in col and not 'avg' in col]
-                for index, run in eval_file.iterrows():
-                    # use training loss of last epoch
-                    train_loss = json.loads(run[loss_column][0])[-1]
-                    val_loss = json.loads(run[val_detector + '_loss'])
-                    # create final value by taking average of last two train and validation loss values
-                    # and dividing averages
-                    train_val_loss_avg.append(
-                        ((train_loss[-2] + train_loss[-1]) / 2) / (val_loss[-2] + val_loss[-1]) / 2)
-        mota = eval_file[val_detector + '_mota'].tolist()
-        # create list of pairs which resemble points for each run within the scatter plot
-        combined = [list(a) for a in zip(train_val_loss_avg, mota)]
-        for pair in combined:
-            axs[2].scatter(pair[0], pair[1])
-        axs[2].legend(eval_file.index.tolist(), prop={'size': 15})
-        axs[2].set_title('train loss / val loss vs. MOTA')
-        axs[2].set_xlabel('train loss / val loss')
-        axs[2].set_ylabel('MOTA')
-        axs[2].set_xlim((min(train_val_loss_avg) - (min(train_val_loss_avg) / 4),
-                         max(train_val_loss_avg) + (max(train_val_loss_avg) / 4)))
-        axs[2].set_ylim((min(mota) - (min(mota) / 32), max(mota) + (max(mota) / 32)))
-
-        plt.savefig(os.path.join(log_directory_path, 'plots', 'MOTA', val_detector + '.png'))
-        plt.close()
-
-    # Create training validation loss vs MOTA
-    for train_detector in train_detector_names:
-        train_val_loss_avg = []
-        for index, run in eval_file.iterrows():
-            train_val_loss = json.loads(run[train_detector + '_loss'])
-            # create final value by taking average of last two train loss values
-            train_val_loss_avg.append((train_val_loss[-2] + train_val_loss[-1]) / 2)
-        mota = eval_file[train_detector + '_mota'].tolist()
-        # create list of pairs which resemble points for each run within the scatter plot
-        combined = [list(a) for a in zip(train_val_loss_avg, mota)]
-        for pair in combined:
             plt.scatter(pair[0], pair[1])
         plt.legend(eval_file.index.tolist())
-        plt.title('val loss ' + train_detector + ' vs. MOTA')
-        plt.xlabel('val loss ' + train_detector)
-        plt.ylabel('MOTA')
-        plt.xlim((min(train_val_loss_avg) - (min(train_val_loss_avg) / 4),
-                  max(train_val_loss_avg) + (max(train_val_loss_avg) / 4)))
+        plt.title('Validation loss ' + detector + ' vs. MOTA ' + detector)
+        plt.xlabel('val loss ' + detector)
+        plt.ylabel('MOTA ' + detector)
+        plt.xlim((min(val_loss_avg) - (min(val_loss_avg) / 4),
+                  max(val_loss_avg) + (max(val_loss_avg) / 4)))
         plt.ylim((min(mota) - (min(mota) / 32), max(mota) + (max(mota) / 32)))
 
-        plt.savefig(os.path.join(log_directory_path, 'plots', 'MOTA', train_detector + '.png'))
+        plt.savefig(os.path.join(log_directory_path, 'plots', 'MOTA', detector + '_2.png'))
         plt.close()
 
-    """
-    OVERFITTING ANALYSIS (IDS)
-    """
-    # iterate over all validation detectors
-    for val_detector in val_detector_names:
-        # combine three plots to one plot with the subplots being next to each other
-        fig, axs = plt.subplots(1, 3)
-        fig.set_size_inches(30, 10)
-        plt.title(val_detector)
-        plt.autoscale()
-        # create validation loss vs. ID switches plots
-        val_loss_avg = []
-        for index, run in eval_file.iterrows():
-            val_loss = json.loads(run[val_detector + '_loss'])
-            # create final value by taking average of last two validation loss values
-            val_loss_avg.append((val_loss[-2] + val_loss[-1]) / 2)
-        ids = eval_file[val_detector + '_IDS'].tolist()
+        ### IDS ###
+
         # create list of pairs which resemble points for each run within the scatter plot
         combined = [list(a) for a in zip(val_loss_avg, ids)]
         for pair in combined:
-            axs[0].scatter(pair[0], pair[1])
-        axs[0].set_title('val loss vs. IDS')
-        axs[0].set_xlabel('val_loss')
-        axs[0].set_ylabel('IDS')
-        axs[0].legend(eval_file.index.tolist(), prop={'size': 15})
-        axs[0].set_xlim((min(val_loss_avg) - (min(val_loss_avg) / 4), max(val_loss_avg) + (max(val_loss_avg) / 4)))
-        axs[0].set_ylim((min(ids) - (min(ids) / 32), max(ids) + (max(ids) / 32)))
-
-        # create train loss vs ID switches plot
-        train_loss_avg = []
-        for detector_type in detector_types:
-            if detector_type in val_detector:
-                # if combined setting use loss of final GCN
-                if experiment_type == 'single':
-                    loss_column = [col for col in eval_file.columns if
-                                   'train' in col and detector_type in col and not 'avg' in col]
-                else:
-                    loss_column = [col for col in eval_file.columns if
-                                   'train' in col and detector_type in col and 'final' in col and not 'avg' in col]
-                for index, run in eval_file.iterrows():
-                    train_loss = json.loads(run[loss_column][0])[-1]
-                    # create final value by taking average of last two train loss values
-                    train_loss_avg.append((train_loss[-2] + train_loss[-1]) / 2)
-        ids = eval_file[val_detector + '_IDS'].tolist()
-        # create list of pairs which resemble points for each run within the scatter plot
-        combined = [list(a) for a in zip(train_loss_avg, ids)]
-        for pair in combined:
-            axs[1].scatter(pair[0], pair[1])
-        axs[1].set_title('train loss vs. IDS')
-        axs[1].set_xlabel('train loss')
-        axs[1].set_ylabel('IDS')
-        axs[1].legend(eval_file.index.tolist(), prop={'size': 15})
-        axs[1].set_xlim(
-            (min(train_loss_avg) - (min(train_loss_avg) / 4), max(train_loss_avg) + (max(train_loss_avg) / 4)))
-        axs[1].set_ylim((min(ids) - (min(ids) / 32), max(ids) + (max(ids) / 32)))
-
-        # create train loss divided by val loss vs. ids plot
-        train_val_loss_avg = []
-        for detector_type in detector_types:
-            if detector_type in val_detector:
-                # if combined setting use loss of final GCN
-                if experiment_type == 'single':
-                    loss_column = [col for col in eval_file.columns if
-                                   'train' in col and detector_type in col and not 'avg' in col]
-                else:
-                    loss_column = [col for col in eval_file.columns if
-                                   'train' in col and detector_type in col and 'final' in col and not 'avg' in col]
-                for index, run in eval_file.iterrows():
-                    train_loss = json.loads(run[loss_column][0])[-1]
-                    val_loss = json.loads(run[val_detector + '_loss'])
-                    # create final value by taking average of last two train and validation loss values
-                    # and divide resulting values
-                    train_val_loss_avg.append(
-                        ((train_loss[-2] + train_loss[-1]) / 2) / (val_loss[-2] + val_loss[-1]) / 2)
-        ids = eval_file[val_detector + '_IDS'].tolist()
-        # create list of pairs which resemble points for each run within the scatter plot
-        combined = [list(a) for a in zip(train_val_loss_avg, ids)]
-        for pair in combined:
-            axs[2].scatter(pair[0], pair[1])
-        axs[2].legend(eval_file.index.tolist(), prop={'size': 15})
-        axs[2].set_title('train loss / val loss vs. IDS')
-        axs[2].set_xlabel('train loss / val loss')
-        axs[2].set_ylabel('IDS')
-        axs[2].set_xlim((min(train_val_loss_avg) - (min(train_val_loss_avg) / 4),
-                         max(train_val_loss_avg) + (max(train_val_loss_avg) / 4)))
-        axs[2].set_ylim((min(ids) - (min(ids) / 32), max(ids) + (max(ids) / 32)))
-
-        plt.savefig(os.path.join(log_directory_path, 'plots', 'IDS', val_detector + '.png'))
-        plt.close()
-
-    # create training validation loss vs IDS
-    # iterate over all train detectors
-    for train_detector in train_detector_names:
-        train_val_loss_avg = []
-        for index, run in eval_file.iterrows():
-            train_val_loss = json.loads(run[train_detector + '_loss'])
-            # create final value by taking average of last two train loss values
-            train_val_loss_avg.append((train_val_loss[-2] + train_val_loss[-1]) / 2)
-        ids = eval_file[train_detector + '_IDS'].tolist()
-        # create list of pairs which resemble points for each run within the scatter plot
-        combined = [list(a) for a in zip(train_val_loss_avg, ids)]
-        for pair in combined:
             plt.scatter(pair[0], pair[1])
         plt.legend(eval_file.index.tolist())
-        plt.title('val loss ' + train_detector + ' vs. MOTA')
-        plt.xlabel('val loss ' + train_detector)
-        plt.ylabel('IDS')
-        plt.xlim((min(train_val_loss_avg) - (min(train_val_loss_avg) / 4),
-                  max(train_val_loss_avg) + (max(train_val_loss_avg) / 4)))
+        plt.title('Validation loss ' + detector + ' vs. MOTA ' + detector)
+        plt.xlabel('val loss ' + detector)
+        plt.ylabel('MOTA ' + detector)
+        plt.xlim((min(val_loss_avg) - (min(val_loss_avg) / 4),
+                  max(val_loss_avg) + (max(val_loss_avg) / 4)))
         plt.ylim((min(ids) - (min(ids) / 32), max(ids) + (max(ids) / 32)))
 
-        plt.savefig(os.path.join(log_directory_path, 'plots', 'IDS', train_detector + '.png'))
+        plt.savefig(os.path.join(log_directory_path, 'plots', 'IDS', detector + '_2.png'))
         plt.close()
 
 
@@ -450,16 +393,17 @@ def create_videos(data_directory, detectors, fps):
 
 
 if __name__ == '__main__':
-    log_path = 'logs/20201001/165638'
-    data_path = 'data/MOT/MOT17/train'
+    log_pth = 'logs/20201113/142220'
+    data_pth = 'data/MOT/MOT17/train'
+    seqmap_path = 'evaluation/seqmaps'
     removed = True
+    is_split_experiment = False
     train_type = 'single'
     runs = 1
     epochs = 4
-    run_path = 'run_1/full'
-    seqmap_path = 'evaluation/seqmaps'
-    seqmap = 'MOT17-train.txt'
-    seqmap_no_train = 'MOT17-no-train.txt'
+    run_to_visualize = 'run_1/full'
+    seqmap = 'MOT17-train.txt'  # Seqmap which contains train sequence
+    seqmap_no_train = 'MOT17-no-train.txt'  # Seqmap which does not contain train sequence
 
     # detector names
     train_det = ['MOT17-04-DPM', 'MOT17-04-FRCNN', 'MOT17-04-SDP']
@@ -485,16 +429,17 @@ if __name__ == '__main__':
     # array containig detector types used during experiment
     det_types = ['DPM', 'FRCNN', 'SDP']
 
-    eval_data = evaluate_tracking(evaluation_runs=runs,
+    eval_data = evaluate_tracking(eval_runs=runs,
                                   removed_instances=removed,
-                                  log_files_path=log_path,
-                                  data_path=data_path,
+                                  is_split=is_split_experiment,
+                                  log_files_path=log_pth,
+                                  data_path=data_pth,
                                   sequence_maps=[os.path.join(seqmap_path, seqmap_no_train),
                                                  os.path.join(seqmap_path, seqmap)],
                                   detectors=train_det + val_det
                                   )
 
-    create_plots(log_directory_path=log_path,
+    create_plots(log_directory_path=log_pth,
                  eval_file=eval_data,
                  train_detector_names=train_det,
                  val_detector_names=val_det,
@@ -503,7 +448,7 @@ if __name__ == '__main__':
                  experiment_type=train_type
                  )
 
-    # uncomment if created videos for train and test sequences (see cluster_vis function in convert_script.m)
+    # Uncomment if want to create videos for train and test sequences (need images in cluster_vis folder)
     # NOTE: takes up a lot of disk space!
-    # create_videos(os.path.join(log_path, run_path), val_det, det_fps)
+    # create_videos(os.path.join(log_pth, run_to_visualize), val_det, det_fps)
     # create_videos(os.path.join(log_path, run_path), test_det, det_fps)
