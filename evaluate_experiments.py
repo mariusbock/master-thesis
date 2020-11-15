@@ -1,3 +1,9 @@
+###################################################################
+# File Name: evaluate_experiments.py
+# Author: Marius Bock
+# mail: marius.bock@protonmail.com
+###################################################################
+
 import os
 import sys
 import json
