@@ -16,9 +16,9 @@ from gcn_clustering.utils import to_numpy
 from gcn_clustering.utils.osutils import mkdir_if_missing
 
 
-def create_train_args(seed, workers, print_freq, gpu, save_checkpoints, log_directory, lr, momentum, weight_decay,
-                      epochs, batch_size, k_at_hop, active_connection, element_wise_products_feeder,
-                      element_wise_products_type, absolute_differences, normalise_distances):
+def create_train_args(seed, workers, print_freq, gpu, log_directory, lr, momentum, weight_decay, epochs, batch_size,
+                      k_at_hop, active_connection, element_wise_products_feeder, element_wise_products_type,
+                      absolute_differences, normalise_distances):
     """
     Function that creates arguments object that contains parameters for the training method of the GCN clustering
 
@@ -27,7 +27,6 @@ def create_train_args(seed, workers, print_freq, gpu, save_checkpoints, log_dire
         workers -- number of workers employed during training
         print_freq -- batch print frequency of GCN output
         gpu -- gpu used for training
-        save_checkpoints -- boolean whether to save checkpoints in between epochs
         log_directory -- directory where to save checkpoints to
         lr -- learning rate during training
         momentum -- momentum during training
@@ -54,7 +53,6 @@ def create_train_args(seed, workers, print_freq, gpu, save_checkpoints, log_dire
     parser.add_argument('--workers', default=workers, type=int)
     parser.add_argument('--print_freq', default=print_freq, type=int)
     parser.add_argument('--gpu', default=gpu, type=str)
-    parser.add_argument('--save_checkpoints', type=bool, default=save_checkpoints)
     parser.add_argument('--log_directory', type=str, metavar='PATH', default=log_directory)
 
     # Optimization args
@@ -76,9 +74,9 @@ def create_train_args(seed, workers, print_freq, gpu, save_checkpoints, log_dire
     return args
 
 
-def create_test_args(seed, workers, print_freq, gpu, use_checkpoint, log_directory, save_feature_map, batch_size,
-                     k_at_hop, active_connection, element_wise_products_feeder, element_wise_products_type,
-                     absolute_differences, normalise_distances):
+def create_test_args(seed, workers, print_freq, gpu, log_directory, batch_size, k_at_hop, active_connection,
+                     element_wise_products_feeder, element_wise_products_type, absolute_differences,
+                     normalise_distances):
     """
     Function that creates arguments object that contains parameters for the testing method of the GCN clustering
 
@@ -87,9 +85,7 @@ def create_test_args(seed, workers, print_freq, gpu, use_checkpoint, log_directo
         workers -- number of workers employed during testing
         print_freq -- batch print frequency of GCN output
         gpu -- gpu used for testing
-        use_checkpoint -- boolean indicating whether to use a saved checkpoint to initialise GCN
         log_directory -- directory where to save checkpoints to
-        save_feature_map -- boolean indicating whether to save 512-dimension feature map (see GCN architecture)
         batch_size -- size of batch for testing steps
         k-at-hop -- k-at-hop employed for instance pivot graph creation
         active_connection -- active connection employed for instance pivot graph creation
@@ -112,7 +108,6 @@ def create_test_args(seed, workers, print_freq, gpu, use_checkpoint, log_directo
     parser.add_argument('--use_checkpoint', default=use_checkpoint, type=bool)
     parser.add_argument('--checkpoint', type=str, metavar='PATH')
     parser.add_argument('--log_directory', type=str, metavar='PATH', default=log_directory)
-    parser.add_argument('--save_feature_map', type=bool, default=save_feature_map)
 
     # Testing args
     parser.add_argument('--batch_size', type=int, default=batch_size)

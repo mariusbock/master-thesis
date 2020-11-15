@@ -25,7 +25,6 @@ from .feeder.feeder import Feeder
 from .utils import to_numpy
 from .utils.meters import AverageMeter
 from .utils.osutils import mkdir_if_missing
-from .utils.serialization import save_checkpoint
 from .test import val_main, obtain_512_feature_map
 
 from sklearn.metrics import precision_score, recall_score
@@ -102,12 +101,6 @@ def train_main(train_args, test_args, detector_name, run, input_channels, featur
     # if statement introduced to make CPU compatible; define loss function (CE loss)
     criterion = nn.CrossEntropyLoss().to(train_args.gpu)
 
-    # save state of network after each epoch as ckpt file (see utils.serialization)
-    if train_args.save_checkpoints:
-        save_checkpoint({
-            'state_dict': net.state_dict(),
-            'epoch': 0, }, False,
-            fpath=os.path.join(train_args.logs_dir, 'epoch_{}.ckpt'.format(0)))
     epoch_losses = []
     epoch_avg_losses = []
     epoch_val_losses = []
@@ -202,21 +195,10 @@ def train_main(train_args, test_args, detector_name, run, input_channels, featur
                              element_wise_products_type=test_args.element_wise_products_type
                              )
 
-        if test_args.save_feature_map:
-            mkdir_if_missing(os.path.join(test_args.log_directory, 'feature_maps'))
-            print('\n SAVING 512 FEATURE MAP')
-            np.save(os.path.join(test_args.log_directory, 'feature_maps',
-                                 'train_512_epoch_' + str(epoch + 1) + '.npy'), feature_map)
         epoch_losses.append(epoch_loss)
         epoch_avg_losses.append(epoch_avg_loss)
         epoch_val_losses.append(epoch_val_loss)
         epoch_avg_val_losses.append(epoch_avg_val_loss)
-        # after each epoch save state into file (is_best is set to false here)
-        if train_args.save_checkpoints and epoch + 1 == 4:
-            save_checkpoint({
-                'state_dict': net.state_dict(),
-                'epoch': epoch + 1, }, False,
-                fpath=os.path.join(train_args.logs_dir, 'epoch_{}.ckpt'.format(epoch + 1)))
     # print final elapsed time
     print("Final elapsed time: " + str(time.time() - start_time))
 

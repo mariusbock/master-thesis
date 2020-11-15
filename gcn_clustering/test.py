@@ -26,7 +26,6 @@ from . import model
 from .feeder.feeder import Feeder, TestFeeder
 from .utils import to_numpy
 from .utils.meters import AverageMeter
-from .utils.serialization import load_checkpoint
 from .utils.utils import bcubed
 from .utils.graph import graph_propagation
 
@@ -60,9 +59,6 @@ def val_main(state_dict, args, input_channels, features, knn_graph, labels, bbox
         torch.manual_seed(args.seed)
     cudnn.benchmark = True
 
-    if args.use_checkpoint:
-        sys.stdout = Logger(os.path.join(args.logs_dir, 'log.txt'))
-
     # initiate feeder but with training, false meaning that unique_nodes_list are also returned per instance
     valset = Feeder(features,
                     knn_graph,
@@ -80,15 +76,8 @@ def val_main(state_dict, args, input_channels, features, knn_graph, labels, bbox
         valset, batch_size=args.batch_size,
         num_workers=args.workers, shuffle=False, pin_memory=True)
 
-    # changed this to save space on server (state_dict needs to be passed to test_main method)
-    if args.use_checkpoint:
-        ckpt = load_checkpoint(args.checkpoint)
-        net = model.gcn(args)
-        net.load_state_dict(ckpt['state_dict'])
-        net = net.cuda()
-    else:
-        net = model.gcn(input_channels)
-        net.load_state_dict(state_dict)
+    net = model.gcn(input_channels)
+    net.load_state_dict(state_dict)
     # .cuda() copies CPU data to GPU. You probably don't want to keep the data in GPU all the time.
     # That means, you only store data in GPU when it's really necessary.
     net = net.to(args.gpu)
@@ -154,9 +143,6 @@ def test_main(state_dict, args, input_channels, features, knn_graph, bbox_size_i
     torch.manual_seed(args.seed)
     cudnn.benchmark = True
 
-    if args.use_checkpoint:
-        sys.stdout = Logger(os.path.join(args.logs_dir, 'log.txt'))
-
     # initiate test feeder object
     testset = TestFeeder(features,
                          knn_graph,
@@ -175,15 +161,8 @@ def test_main(state_dict, args, input_channels, features, knn_graph, bbox_size_i
                             shuffle=False,
                             pin_memory=True)
 
-    # changed this to save space on server (state_dict needs to be passed to test_main method)
-    if args.use_checkpoint:
-        ckpt = load_checkpoint(args.checkpoint)
-        net = model.gcn(args)
-        net.load_state_dict(ckpt['state_dict'])
-        net = net.cuda()
-    else:
-        net = model.gcn(input_channels)
-        net.load_state_dict(state_dict)
+    net = model.gcn(input_channels)
+    net.load_state_dict(state_dict)
     # .cuda() copies CPU data to GPU. You probably don't want to keep the data in GPU all the time.
     # That means, you only store data in GPU when it's really necessary.
     net = net.to(args.gpu)
@@ -398,9 +377,6 @@ def handle_intermediate_network(state_dict, args, input_channels, features, knn_
     torch.manual_seed(args.seed)
     cudnn.benchmark = True
 
-    if args.use_checkpoint:
-        sys.stdout = Logger(os.path.join(args.logs_dir, 'log.txt'))
-
     # initiate feeder but with training, false meaning that unique_nodes_list are also returned per instance
     valset = Feeder(features,
                     knn_graph,
@@ -418,15 +394,8 @@ def handle_intermediate_network(state_dict, args, input_channels, features, knn_
         valset, batch_size=args.batch_size,
         num_workers=args.workers, shuffle=False, pin_memory=True)
 
-    # changed this to save space on server (state_dict needs to be passed to test_main method)
-    if args.use_checkpoint:
-        ckpt = load_checkpoint(args.checkpoint)
-        net = model.gcn_intermediate(input_channels)
-        net.load_state_dict(ckpt['state_dict'])
-        net = net.cuda()
-    else:
-        net = model.gcn_intermediate(input_channels)
-        net.load_state_dict(state_dict)
+    net = model.gcn_intermediate(input_channels)
+    net.load_state_dict(state_dict)
     # .cuda() copies CPU data to GPU. You probably don't want to keep the data in GPU all the time.
     # That means, you only store data in GPU when it's really necessary.
     net = net.to(args.gpu)
@@ -469,9 +438,6 @@ def obtain_512_feature_map(state_dict, args, input_channels, features, knn_graph
     torch.manual_seed(args.seed)
     cudnn.benchmark = True
 
-    if args.use_checkpoint:
-        sys.stdout = Logger(os.path.join(args.logs_dir, 'log.txt'))
-
     # initiate feeder but with training, false meaning that unique_nodes_list are also returned per instance
     valset = Feeder(features,
                     knn_graph,
@@ -489,15 +455,8 @@ def obtain_512_feature_map(state_dict, args, input_channels, features, knn_graph
         valset, batch_size=args.batch_size,
         num_workers=args.workers, shuffle=False, pin_memory=True)
 
-    # changed this to save space on server (state_dict needs to be passed to test_main method)
-    if args.use_checkpoint:
-        ckpt = load_checkpoint(args.checkpoint)
-        net = model.gcn_feature_map(input_channels)
-        net.load_state_dict(ckpt['state_dict'])
-        net = net.cuda()
-    else:
-        net = model.gcn_feature_map(input_channels)
-        net.load_state_dict(state_dict)
+    net = model.gcn_feature_map(input_channels)
+    net.load_state_dict(state_dict)
     # .cuda() copies CPU data to GPU. You probably don't want to keep the data in GPU all the time.
     # That means, you only store data in GPU when it's really necessary.
     net = net.to(args.gpu)
