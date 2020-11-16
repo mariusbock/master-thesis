@@ -105,8 +105,6 @@ def create_test_args(seed, workers, print_freq, gpu, log_directory, batch_size, 
     parser.add_argument('--workers', default=workers, type=int)
     parser.add_argument('--print_freq', default=print_freq, type=int)
     parser.add_argument('--gpu', default=gpu, type=str)
-    parser.add_argument('--use_checkpoint', default=use_checkpoint, type=bool)
-    parser.add_argument('--checkpoint', type=str, metavar='PATH')
     parser.add_argument('--log_directory', type=str, metavar='PATH', default=log_directory)
 
     # Testing args
