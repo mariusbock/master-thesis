@@ -21,8 +21,8 @@ In order to create dataset weights for different CNNs need to be downloaded and 
 - From https://github.com/WangWenhao0716/Adapted-Center-and-Scale-Prediction download both 'ACSP(Smooth L1).pth.tea' and 'ResNet101v2+SN(8,32).pth'
 - From https://github.com/layumi/Person_reID_baseline_pytorch download 'ft_net.pth'
 
-Main script of dataset creation is dataset_creation.py. See hyperparameters provided in file what settings are possible. Note: this creation process was only tested for MOT17 and MOT20 data. Please place the files downloaded from the MOT website as is into a folder (e.g. 'data') within the main directory of this repository.
-
+Main script of dataset creation is dataset_creation.py. See hyperparameters provided in file what settings are possible. Note: this creation process was only tested for MOT17 and MOT20 data. Please place the files downloaded from the MOT website as is into a folder (e.g. 'data') within the main directory of this repository. Note that the modified detections of Tracktor were put in a 'MOT17_mod' folder with the same folder structure as the normal files - just without images, ground truth and seqinfo.ini file.
+ 
 ## Experiments
 Currently, only the non-ensemble setup is supported. One can read up on the proposed ensemble setup, but would need to adjust workflow to fit new methods.
 
