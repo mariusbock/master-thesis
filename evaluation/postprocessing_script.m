@@ -1,8 +1,8 @@
 function postprocessing_script
     % POSTPROCESSING SCRIPT
     % This script can be used to convert predictions made by the GCN to
-    % trajectories. This is a modified version of the one provided by Professor
-    % Margret Keuper. 
+    % trajectories. This is a modified version of the one provided by 
+    % Professor Margret Keuper. 
     % PARAMETERS:
     %   log_dir   --   directory where log files are located 
     %                  (i.e. eval_input.txt and heuristic_input.txt)
@@ -22,37 +22,46 @@ function postprocessing_script
     %   is_smooth --   boolean whether to apply smoothing on sequences
     
     % PARAMETERS
-    log_dir = '../logs/20201112/192356';
-    %log_dir = '/Users/mariusbock/Desktop/Experiments/5.2. Consistency checks/Spa/Frame-Distance KNN/Same Seed';
+    log_dir = '../logs/20201113/000000';
     img_dir = '../data/MOT/MOT17';
     type = 'full'; 
     runs = 1; 
     testing = false; 
-    visualize = false; 
-    heuristic = false; 
-    
-    % minimum detector confidence score (all detections)
-    minscore = [+0.0 +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 ... SDP
-                -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 ... DPM
-                +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 ... FRCNN
-                ];
-            
-    % minimum average detector confidence score in trajectory (cluster)
-    minlscore = [0.5 0.5 0.5 0.5 0.5 0.5 0.5 ... SDP
-                 0.2 0.2 0.2 0.2 0.2 0.2 0.2 ... DPM
-                 0.5 0.5 0.5 0.5 0.5 0.5 0.5 ... FRCNN
+    visualize = true; 
+    heuristic = true; 
+
+     % minimum detector confidence score (all detections)
+%      minscore = [+0.0 +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 ... SDP
+%                  -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 ... DPM
+%                  +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 ... FRCNN
+%                  ];
+
+     % minimum detector confidence score (all detections)
+     minscore = [-1 -1 -1 -1 -1 -1 -1 ... SDP
+                 -1 -1 -1 -1 -1 -1 -1 ... DPM
+                 -1 -1 -1 -1 -1 -1 -1 ... FRCNN
                  ];
+
+     % minimum average detector confidence score in trajectory (cluster)
+%      minlscore = [0.5 0.5 0.5 0.5 0.5 0.5 0.5 ... SDP
+%                   0.2 0.2 0.2 0.2 0.2 0.2 0.2 ... DPM
+%                   0.5 0.5 0.5 0.5 0.5 0.5 0.5 ... FRCNN
+%                   ];
+     minlscore = [-1 -1 -1 -1 -1 -1 -1 ... SDP
+                  -1 -1 -1 -1 -1 -1 -1 ... DPM
+                  -1 -1 -1 -1 -1 -1 -1 ... FRCNN
+                  ];
+
     
-    % shortest trajectory of pedestrian that is accepted (cluster size)
-    min_size = [5 5 5 5 5 5 5 ... SDP
-                5 5 5 5 5 5 5 ... DPM
-                5 5 5 5 5 5 5 ... FRCNN
+     % shortest trajectory of pedestrian that is accepted (cluster size)
+%      min_size = [5 5 5 5 5 5 5 ... SDP
+%                  5 5 5 5 5 5 5 ... DPM
+%                  5 5 5 5 5 5 5 ... FRCNN
+%                  ];
+    min_size = [3 3 3 3 3 3 3 ... SDP
+                2 2 2 2 2 2 2 ... DPM
+                3 3 3 3 3 3 3 ... FRCNN
                 ];
-            
-%     min_size = [1 1 1 1 1 1 1 ... SDP
-%                 1 1 1 1 1 1 1 ... DPM
-%                 1 1 1 1 1 1 1 ... FRCNN
-%                 ];
             
     % maximum frame gap size
     gap_size = 30;
@@ -62,6 +71,11 @@ function postprocessing_script
                  0 0 0 0 0 0 0 ... DPM
                  0 0 0 0 0 0 0 ... FRCNN
                  ];
+%     is_smooth = [1 1 1 1 1 1 1 ... SDP
+%                  1 1 1 1 1 1 1 ... DPM
+%                  1 1 1 1 1 1 1 ... FRCNN
+%                  ];
+
 
     if testing
         img_dir = [img_dir '/test'];
@@ -89,7 +103,7 @@ function postprocessing_script
         for run = 1:(runs)
             sequence = sequence_list{i};
             % load images list
-            seq_dir =  [img_dir sequence '/img/img1/' ];
+            seq_dir =  [img_dir '/' sequence '/img/img1/' ];
             im_list = dir([seq_dir, '*jpg']);
             im_list = strcat(seq_dir,{im_list.name});
             

@@ -26,7 +26,7 @@ INPUT SETTINGS:
     4th: test label column (see corresponding metadata file)
 """
 
-inputs = [['spa', 'reid'], ['reid'], 'labels_0.7_0.3', 'labels_0.5_0.3']
+inputs = [['spa'], ['spa'], 'labels_0.7_0.3', 'labels_0.5_0.3']
 
 """
 TRAIN/ EVAL SETTINGS
@@ -53,10 +53,10 @@ batch_size = 16
 print_freq = 100
 knn_method = 'brute'
 skip_validation = False
-skip_testing = True
-modified_detections = True
+skip_testing = False
+modified_detections = False
 removed = True
-graph_heuristic = False
+graph_heuristic = True
 add_dummy_edges = False
 
 """
@@ -81,7 +81,7 @@ FEEDER OPTIONS
 """
 
 absolute_differences = False
-normalise_distances = False
+normalise_distances = True
 auto_correlate_feat = False
 auto_correlate_knn = False
 auto_correlate_filter = False
@@ -106,7 +106,7 @@ TRAINING-/VALIDATION-HYPERPARAMETERS
 # training
 k_at_hop_train = [200, 10]
 active_connections_train = 10
-knn_type_train = 'pre_filtered_frame_distance'
+knn_type_train = 'frame_distance'
 knn_frame_dist_fw_train = 2
 knn_frame_dist_bw_train = 2
 knn_filter_dataset_train = ['reid']
@@ -118,7 +118,7 @@ learning_rate_train = 1e-2
 # validation + testing
 k_at_hop_val = [20, 5]
 active_connections_val = 5
-knn_type_val = 'pre_filtered_frame_distance'
+knn_type_val = 'frame_distance'
 knn_frame_dist_fw_val = 2
 knn_frame_dist_bw_val = 2
 knn_filter_dataset_val = ['reid']
@@ -1095,13 +1095,6 @@ for iteration in range(iterations):
                                      absolute_differences=absolute_differences,
                                      normalise_distances=normalise_distances
                                      )
-
-                # save 512 feature maps as numpy arrays
-                if val_args.save_feature_map:
-                    print('\n SAVING 512 FEATURE MAP')
-                    mkdir_if_missing(os.path.join(val_args.log_directory, 'feature_maps'))
-                    np.save(os.path.join(val_args.log_directory, 'feature_maps', '512_' + sequence[0] + '.npy'),
-                            feature_512)
 
                 # create predictions
                 if removed:

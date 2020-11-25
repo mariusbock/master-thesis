@@ -110,7 +110,7 @@ void solveProblem(const Parameters& parameters,andres::graph::Graph<>& graph,std
   Timer t;
   t.start();
   andres::graph::multicut::greedyAdditiveEdgeContraction(graph, weights, edge_labels);
-  //andres::graph::multicut::kernighanLin(graph, weights, edge_labels, edge_labels);
+  andres::graph::multicut::kernighanLin(graph, weights, edge_labels, edge_labels);
   t.stop();
   double energy = 0;
   for(size_type v = 0; v < graph.numberOfEdges(); ++v) {

@@ -399,7 +399,7 @@ def create_videos(data_directory, detectors, fps):
 
 
 if __name__ == '__main__':
-    log_pth = 'logs/20201113/142220'
+    log_pth = 'logs/20201113/000000'
     data_pth = 'data/MOT/MOT17/train'
     seqmap_path = 'evaluation/seqmaps'
     removed = True
@@ -435,7 +435,7 @@ if __name__ == '__main__':
     # array containig detector types used during experiment
     det_types = ['DPM', 'FRCNN', 'SDP']
 
-    eval_data = evaluate_tracking(eval_runs=runs,
+    """eval_data = evaluate_tracking(eval_runs=runs,
                                   removed_instances=removed,
                                   is_split=is_split_experiment,
                                   log_files_path=log_pth,
@@ -452,9 +452,9 @@ if __name__ == '__main__':
                  detector_types=det_types,
                  train_epochs=epochs,
                  experiment_type=train_type
-                 )
+                 )"""
 
     # Uncomment if want to create videos for train and test sequences (need images in cluster_vis folder)
     # NOTE: takes up a lot of disk space!
-    # create_videos(os.path.join(log_pth, run_to_visualize), val_det, det_fps)
-    # create_videos(os.path.join(log_path, run_path), test_det, det_fps)
+    create_videos(os.path.join(log_pth, run_to_visualize), val_det, det_fps)
+    # create_videos(os.path.join(log_pth, run_to_visualize), test_det, det_fps)
