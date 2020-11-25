@@ -4,6 +4,8 @@ This repository contains the code for the master thesis "Multiple Object Trackin
 
 ## Introduction
 
+Multiple object tracking (MOT) is a fundamental problem in computer vision which finds many real-world applications. Most state-of-the-art multiple object trackers follow the tracking-by-detection paradigm. The paradigm divides MOT into two subproblems, namely detecting objects within a scene and linking them together to form trajectories. Recent methods have employed clustering methods to solve the latter part of the paradigm. This thesis demonstrates the applicability of GCNs as proposed by Wang et al. to cluster detections and from trajectories. The overall approach differs from previously proposed methods as it learns to cluster detections using only local information surrounding the node. This locality of the decision-making process is expected to make the method less affected by global constraints and being able to correctly classify difficult detections. This thesis extends the implementation by Wang et al. by employing different methods of how localized information is presented to the GCN, applying primal feasible search heuristics as seen in and utilizing preprocessed detections as seen in. The evaluated best setting of the approach ranks 64th within the multiple object tracking benchmark dataset from 2017 (MOT17) while be- ing trained using only one sequence and having no hyperparameter-tuning performed.
+
 ## Requirements
 - numpy 1.18.1
 - matplotlib 3.1.2
