@@ -26,7 +26,7 @@ In order to create dataset weights for different CNNs need to be downloaded and 
 Main script of dataset creation is dataset_creation.py. See hyperparameters provided in file what settings are possible. Note: this creation process was only tested for MOT17 and MOT20 data. Please place the files downloaded from the MOT website as is into a folder (e.g. 'data') within the main directory of this repository. Note that the modified detections of Tracktor were put in a 'MOT17_mod' folder with the same folder structure as the normal files - just without images, ground truth and seqinfo.ini file.
  
 ## Experiments
-Currently, only the non-ensemble setup is supported. One can read up on the proposed ensemble setup, but would need to adjust workflow to fit new methods.
+Currently, only the non-ensemble setup is supported (see experiments_single.py). One can read up on the proposed ensemble setup, but would need to adjust workflow to fit new methods (see experiments_combined.py).
 
 For single experiments, see the experiments_single.py file. See hyperparameters provided in file what settings are possible. The setting provided in the experiments file is the one producing the best result reported in the best setting section of the master thesis.
 
